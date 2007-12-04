@@ -11,7 +11,7 @@ Group:      Graphical desktop/Other
 License:    GPL
 URL:        http://wolfpack.twu.net/Endeavour2
 Source0:    http://wolfpack.twu.net/users/wolfpack/%{name}-%{version}.tar.bz2
-BuildRequires:  XFree86-devel
+BuildRequires:  X11-devel
 BuildRequires:  gtk+-devel
 BuildRequires:  imlib-devel
 BuildRequires:  ImageMagick
