@@ -1,5 +1,5 @@
 %define name    endeavour
-%define version 2.8.1
+%define version 2.8.2
 %define release %mkrel 1
 %define API    2
  
@@ -11,10 +11,10 @@ Group:      Graphical desktop/Other
 License:    GPL
 URL:        http://wolfpack.twu.net/Endeavour2
 Source0:    http://wolfpack.twu.net/users/wolfpack/%{name}-%{version}.tar.bz2
+Patch:      %{name}-2.8.2-gcc-fix.patch
 BuildRequires:  X11-devel
 BuildRequires:  gtk+-devel
 BuildRequires:  imlib-devel
-BuildRequires:  ImageMagick
 #enable zip support
 BuildRequires:  libzip-devel
 #enable video mode extentions
@@ -61,6 +61,7 @@ Libraries, include files and other resources you can use to develop
 
 %prep
 %setup -q 
+%patch -p 1
 
 %build
 export CFLAGS="%optflags" 
@@ -81,13 +82,6 @@ make    PREFIX=%{buildroot}%{_prefix} \
     EDV_LIB_DIR=%{buildroot}%{_libdir} \
     EDV_BIN_DIR=%{buildroot}%{_libdir}/%{name}%{API} \
     install
-# icons
-convert endeavour2/images/%{name}_20x20.xpm -resize 16x16 %{name}-16.png
-convert endeavour2/images/%{name}_32x32.xpm %{name}-32.png
-convert endeavour2/images/%{name}_48x48.xpm %{name}-48.png
-install -D -m 644 %{name}-16.png %{buildroot}%{_miconsdir}/%{name}.png
-install -D -m 644 %{name}-32.png %{buildroot}%{_iconsdir}/%{name}.png 
-install -D -m 644 %{name}-48.png %{buildroot}%{_liconsdir}/%{name}.png  
 
 #rn symlink pointing to build
 rm -f %{buildroot}%{_libdir}/libendeavour2.so 
@@ -101,21 +95,8 @@ ln -s %{_libdir}/libendeavour2.so %{buildroot}%{_libdir}/endeavour2/lib
 mv %{buildroot}/usr/man/man1/* %{buildroot}%{_mandir}/man1
 rm -rfd %{buildroot}/usr/man
 
-# menu entry
-mkdir -p %{buildroot}%{_menudir}
-cat >%{buildroot}%{_menudir}/%{name} <<EOF
-?package(%{name}):\\
-    command="%{_bindir}/%{name}%{API}"\\
-    needs="x11"\\
-    icon="%{name}.png"\\
-    section="System/File Tools"\\
-    title="Endeavour" \
-    longtitle="File browser with management support for all types of disk objects" \
-        xdg="true"
-EOF
-
-mkdir -p $RPM_BUILD_ROOT%{_datadir}/applications
-cat > $RPM_BUILD_ROOT%{_datadir}/applications/mandriva-%{name}.desktop << EOF
+mkdir -p %{buildroot}%{_datadir}/applications
+cat > %{buildroot}%{_datadir}/applications/mandriva-%{name}.desktop << EOF
 [Desktop Entry]
 Name=Endeavour
 Comment=Graphical file manager
@@ -150,10 +131,6 @@ rm -rf %{buildroot}
 %{_datadir}/applications/*.desktop
 %{_datadir}/%{name}%{API}
 %{_libdir}/*.so
-%{_menudir}/%{name}
-%{_iconsdir}/%{name}.png
-%{_miconsdir}/%{name}.png
-%{_liconsdir}/%{name}.png
 %{_iconsdir}/%{name}%{API}*
  
 
