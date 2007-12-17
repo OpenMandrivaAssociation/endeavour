@@ -21,7 +21,6 @@ BuildRequires:  libzip-devel
 BuildRequires:  libxxf86vm-devel
 Obsoletes:  libendeavour2
 Provides:    libendeavour2
-BuildRoot:  %_tmppath/%{name}-%{version}
  
 %description
 Endeavour Mark II is a complete file management suite that comes
