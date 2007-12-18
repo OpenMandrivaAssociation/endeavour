@@ -63,7 +63,7 @@ Libraries, include files and other resources you can use to develop
 %patch -p 1
 
 %build
-export CFLAGS="%optflags" 
+export CFLAGS="%optflags -fPIC"
 ./configure Linux -v --disable=arch-i686 --libdir=-L%{_libdir}
 make    PREFIX=%{_prefix} \
     MAN_DIR=/usr/share/man/man1 \
