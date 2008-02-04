@@ -1,6 +1,6 @@
 %define name    endeavour
-%define version 2.8.2
-%define release %mkrel 2
+%define version 2.8.5
+%define release %mkrel 1
 %define API    2
  
 Name:       %{name}
