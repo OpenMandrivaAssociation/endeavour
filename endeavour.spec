@@ -11,14 +11,15 @@ Group:      Graphical desktop/Other
 License:    GPL
 URL:        http://wolfpack.twu.net/Endeavour2
 Source0:    http://wolfpack.twu.net/users/wolfpack/%{name}-%{version}.tar.bz2
-Patch:      %{name}-2.8.2-gcc-fix.patch
+Patch:      %{name}-2.8.5-gcc.patch
 BuildRequires:  X11-devel
 BuildRequires:  gtk+-devel
 BuildRequires:  imlib-devel
-#enable zip support
 BuildRequires:  libzip-devel
-#enable video mode extentions
-BuildRequires:  libxxf86vm-devel
+BuildRequires:  libtar-devel
+BuildRequires:  libxar-devel
+BuildRequires:  bzip2-devel
+BuildRequires:  libxxf86vm-static-devel
 Obsoletes:  libendeavour2
 Provides:    libendeavour2
 BuildRoot:  %_tmppath/%{name}-%{version}
@@ -66,34 +67,37 @@ Libraries, include files and other resources you can use to develop
 %build
 export CFLAGS="%optflags -fPIC"
 ./configure Linux -v --disable=arch-i686 --libdir=-L%{_libdir}
-make    PREFIX=%{_prefix} \
+make \
+    PREFIX=%{_prefix} \
+    LIB_DIR=%{_libdir} \
     MAN_DIR=/usr/share/man/man1 \
     EDV_INCLUDE_DIR=%{_includedir}/%{name}%{API} \
-    EDV_LIB_DIR=%{_libdir} \
+    EDV_LIB_DIR=%{_libdir}/%{name}%{API} \
     EDV_BIN_DIR=%{_libdir}/%{name}%{API} \
+    EDV_ARCH_DIR=%{_libdir}/%{name}%{API} \
     all
  
 
 %install
 rm -rf %{buildroot}
-make    PREFIX=%{buildroot}%{_prefix} \
+make \
+    PREFIX=%{buildroot}%{_prefix} \
+    LIB_DIR=%{buildroot}%{_libdir} \
     MAN_DIR=%{buildroot}/usr/share/man/man1 \
+    MAN1_DIR=%{buildroot}/usr/share/man/man1 \
     EDV_INCLUDE_DIR=%{buildroot}%{_includedir}/%{name}%{API} \
-    EDV_LIB_DIR=%{buildroot}%{_libdir} \
+    EDV_LIB_DIR=%{buildroot}%{_libdir}/%{name}%{API} \
     EDV_BIN_DIR=%{buildroot}%{_libdir}/%{name}%{API} \
+    EDV_ARCH_DIR=%{buildroot}%{_libdir}/%{name}%{API} \
     install
 
 #rn symlink pointing to build
 rm -f %{buildroot}%{_libdir}/libendeavour2.so 
 #install lib
-install -m 755 endeavour2/lib/libendeavour2.so %{buildroot}%{_libdir}
+#install -m 755 endeavour2/lib/libendeavour2.so %{buildroot}%{_libdir}
 #devloper say this lk is needed
-mkdir %{buildroot}%{_libdir}/endeavour2/lib
-ln -s %{_libdir}/libendeavour2.so %{buildroot}%{_libdir}/endeavour2/lib
-
-#fix man location
-mv %{buildroot}/usr/man/man1/* %{buildroot}%{_mandir}/man1
-rm -rfd %{buildroot}/usr/man
+#mkdir %{buildroot}%{_libdir}/endeavour2/lib
+#ln -s %{_libdir}/libendeavour2.so %{buildroot}%{_libdir}/endeavour2/lib
 
 mkdir -p %{buildroot}%{_datadir}/applications
 cat > %{buildroot}%{_datadir}/applications/mandriva-%{name}.desktop << EOF
@@ -130,7 +134,7 @@ rm -rf %{buildroot}
 %exclude %{_mandir}/man1/*config*
 %{_datadir}/applications/*.desktop
 %{_datadir}/%{name}%{API}
-%{_libdir}/*.so
+#%{_libdir}/*.so
 %{_iconsdir}/%{name}%{API}*
  
 
@@ -139,4 +143,3 @@ rm -rf %{buildroot}
 %{_includedir}/%{name}%{API}
 %{_bindir}/%{name}%{API}-config 
 %{_mandir}/man1/*config*
-
