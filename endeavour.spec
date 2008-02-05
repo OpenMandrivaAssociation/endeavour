@@ -91,13 +91,8 @@ make \
     EDV_ARCH_DIR=%{buildroot}%{_libdir}/%{name}%{API} \
     install
 
-#rn symlink pointing to build
+# remove useless symlink
 rm -f %{buildroot}%{_libdir}/libendeavour2.so 
-#install lib
-#install -m 755 endeavour2/lib/libendeavour2.so %{buildroot}%{_libdir}
-#devloper say this lk is needed
-#mkdir %{buildroot}%{_libdir}/endeavour2/lib
-#ln -s %{_libdir}/libendeavour2.so %{buildroot}%{_libdir}/endeavour2/lib
 
 mkdir -p %{buildroot}%{_datadir}/applications
 cat > %{buildroot}%{_datadir}/applications/mandriva-%{name}.desktop << EOF
