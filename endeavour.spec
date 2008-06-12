@@ -109,13 +109,17 @@ EOF
 
 rm -f %{buildroot}%{_libdir}/%{name}2/{LICENSE,README}
 
+%if %mdkversion < 200900
 %post
 %update_menus
 %{update_desktop_database}
+%endif
 
+%if %mdkversion < 200900
 %postun
 %clean_menus
 %{clean_desktop_database}
+%endif
  
 %clean
 rm -rf %{buildroot}
