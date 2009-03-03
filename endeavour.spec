@@ -1,6 +1,6 @@
 %define name    endeavour
 %define version 2.8.5
-%define release %mkrel 3
+%define release %mkrel 4
 %define API    2
  
 Name:       %{name}
@@ -102,9 +102,9 @@ Comment=Graphical file manager
 Exec=%{_bindir}/%{name}%{API}
 Icon=%{_iconsdir}/%{name}.png
 Terminal=false
-Type=Application 
+Type=Application
 StartupNotify=true
-Categories=GTK;FileManager;X-MandrivaLinux-System-FileTools;
+Categories=GTK;FileManager;Graphics;
 EOF
 
 rm -f %{buildroot}%{_libdir}/%{name}2/{LICENSE,README}
