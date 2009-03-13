@@ -15,7 +15,8 @@ Group:      Graphical desktop/Other
 License:    GPL
 URL:        http://wolfpack.twu.net/Endeavour2
 Source:     http://wolfpack.twu.net/users/wolfpack/%{name}-%{version}.tar.bz2
-Patch:      endeavour-3.1.2-fix-build-error.patch
+Patch0:     endeavour-3.1.2-fix-build-error.patch
+Patch1:     endeavour-3.1.2-fix-lib64-build.patch
 BuildRequires:  X11-devel
 BuildRequires:  gtk+-devel
 BuildRequires:  imlib-devel
@@ -71,11 +72,22 @@ Libraries, include files and other resources you can use to develop
 
 %prep
 %setup -q 
-%patch -p 1
+%patch0 -p 1
+%patch1 -p 1
 
 %build
 export CFLAGS="%optflags -fPIC"
-./configure Linux -v --disable=arch-i686 --libdir=-L%{_libdir}
+%ifarch x86_64
+%define platform Linux64
+%else
+%define platform Linux
+%endif
+./configure %{platform} \
+    -v \
+    --disable=arch-i686 \
+    --enable-debug \
+    --libdir=-L%{_libdir}
+
 make \
     PREFIX=%{_prefix} \
     LIB_DIR=%{_libdir} \
