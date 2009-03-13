@@ -1,7 +1,11 @@
 %define name    endeavour
-%define version 2.8.5
-%define release %mkrel 4
+%define version 3.1.2
+%define major   %{version}
+%define release %mkrel 1
 %define API    2
+
+%define libname %mklibname %{name} %{major}
+%define develanme %mklibname %{name} -d
  
 Name:       %{name}
 Version:    %{version}
@@ -10,8 +14,8 @@ Summary:    Graphical file manager
 Group:      Graphical desktop/Other
 License:    GPL
 URL:        http://wolfpack.twu.net/Endeavour2
-Source0:    http://wolfpack.twu.net/users/wolfpack/%{name}-%{version}.tar.bz2
-Patch:      %{name}-2.8.5-gcc.patch
+Source:     http://wolfpack.twu.net/users/wolfpack/%{name}-%{version}.tar.bz2
+Patch:      endeavour-3.1.2-fix-build-error.patch
 BuildRequires:  X11-devel
 BuildRequires:  gtk+-devel
 BuildRequires:  imlib-devel
@@ -48,15 +52,20 @@ Featuring:
   *  ZipTool - Front end for ZipTools
  
 
-%package -n %{name}-devel
-Summary:        Development header files for %{name}
-Group:          Development/C
-Requires:       %{name} = %{version}-%{release}
-Provides:       %{name}-devel = %{version}-%{release}
-Obsoletes:     libendeavour2-devel
-Provides:       libendeavour2-devel
+%package -n %{libname}
+Summary:    Shared libraries for %{name}
+Group:      System/Libraries
  
-%description -n %{name}-devel
+%description -n %{libname}
+Shared libraries for %{name}.
+
+%package -n %{develname}
+Summary:    Development header files for %{name}
+Group:      Development/C
+Provides:   %{name}-devel = %{version}-%{release}
+Requires:   %{libname} = %{version}-%{release}
+ 
+%description -n %{develname}
 Libraries, include files and other resources you can use to develop
 %{name} applications.
 
@@ -75,9 +84,9 @@ make \
     EDV_LIB_DIR=%{_libdir}/%{name}%{API} \
     EDV_BIN_DIR=%{_libdir}/%{name}%{API} \
     EDV_ARCH_DIR=%{_libdir}/%{name}%{API} \
+    MAJOR=%{major} \
     all
  
-
 %install
 rm -rf %{buildroot}
 make \
@@ -89,10 +98,14 @@ make \
     EDV_LIB_DIR=%{buildroot}%{_libdir}/%{name}%{API} \
     EDV_BIN_DIR=%{buildroot}%{_libdir}/%{name}%{API} \
     EDV_ARCH_DIR=%{buildroot}%{_libdir}/%{name}%{API} \
+    LDCONFIG=/bin/true \
+    MAJOR=%{major} \
     install
 
-# remove useless symlink
-rm -f %{buildroot}%{_libdir}/libendeavour2.so 
+# symlink shared library
+pushd %{buildroot}%{_libdir}
+ln -sf libendeavour2-base.so.%{major} libendeavour2-base.so
+popd
 
 mkdir -p %{buildroot}%{_datadir}/applications
 cat > %{buildroot}%{_datadir}/applications/mandriva-%{name}.desktop << EOF
@@ -130,15 +143,16 @@ rm -rf %{buildroot}
 %{_bindir}/%{name}%{API}
 %{_libdir}/%{name}%{API}
 %{_mandir}/man1/*
-%exclude %{_mandir}/man1/*config*
 %{_datadir}/applications/*.desktop
 %{_datadir}/%{name}%{API}
-#%{_libdir}/*.so
 %{_iconsdir}/%{name}%{API}*
- 
 
-%files -n %{name}-devel
+%files -n %{libname}
+%defattr(-,root,root)
+%{_libdir}/libendeavour2-base.so.*
+
+%files -n %{develname}
 %defattr(-,root,root)
 %{_includedir}/%{name}%{API}
-%{_bindir}/%{name}%{API}-config 
-%{_mandir}/man1/*config*
+%{_bindir}/endeavour2-base-config
+%{_libdir}/libendeavour2-base.so
