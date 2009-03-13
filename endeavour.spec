@@ -149,7 +149,7 @@ rm -rf %{buildroot}
 
 %files -n %{libname}
 %defattr(-,root,root)
-%{_libdir}/libendeavour2-base.so.*
+%{_libdir}/libendeavour2-base-%{major}.so
 
 %files -n %{develname}
 %defattr(-,root,root)
