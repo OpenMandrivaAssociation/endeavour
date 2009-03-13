@@ -1,7 +1,7 @@
 %define name    endeavour
 %define version 3.1.2
 %define major   %{version}
-%define release %mkrel 3
+%define release %mkrel 4
 %define API    2
 
 %define libname %mklibname %{name} %{major}
@@ -117,7 +117,7 @@ make \
 
 # symlink shared library
 pushd %{buildroot}%{_libdir}
-ln -sf libendeavour2-base.so.%{major} libendeavour2-base.so
+ln -sf libendeavour2-base-%{major}.so libendeavour2-base.so
 popd
 
 mkdir -p %{buildroot}%{_datadir}/applications
