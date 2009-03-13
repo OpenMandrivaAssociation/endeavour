@@ -1,7 +1,7 @@
 %define name    endeavour
 %define version 3.1.2
 %define major   %{version}
-%define release %mkrel 2
+%define release %mkrel 3
 %define API    2
 
 %define libname %mklibname %{name} %{major}
@@ -65,6 +65,7 @@ Summary:    Development header files for %{name}
 Group:      Development/C
 Provides:   %{name}-devel = %{version}-%{release}
 Requires:   %{libname} = %{version}-%{release}
+Obsoletes:  %{name}-devel < 3.1.2
  
 %description -n %{develname}
 Libraries, include files and other resources you can use to develop
