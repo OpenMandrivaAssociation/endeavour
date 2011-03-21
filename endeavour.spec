@@ -1,7 +1,7 @@
 %define name    endeavour
 %define version 3.1.2
 %define major   %{version}
-%define release %mkrel 5
+%define release %mkrel 6
 %define API    2
 
 %define libname %mklibname %{name} %{major}
