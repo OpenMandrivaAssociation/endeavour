@@ -17,14 +17,21 @@ URL:        http://wolfpack.twu.net/Endeavour2
 Source:     http://wolfpack.twu.net/users/wolfpack/%{name}-%{version}.tar.bz2
 Patch0:     endeavour-3.1.2-fix-build-error.patch
 Patch1:     endeavour-3.1.2-fix-lib64-build.patch
-BuildRequires:  X11-devel
+Patch2:		endeavour-3.1.2-libzip-0.10.patch
+Patch3:		endeavour-3.1.2-link.patch
+BuildRequires:  libx11-devel
+BuildRequires:	libxpm-devel
+BuildRequires:	libxxf86vm-devel
 BuildRequires:  gtk+-devel
 BuildRequires:  imlib-devel
 BuildRequires:  libzip-devel
 BuildRequires:  libtar-devel
 BuildRequires:  libxar-devel
 BuildRequires:  bzip2-devel
-BuildRequires:  libxxf86vm-static-devel
+BuildRequires:  ungif-devel
+BuildRequires:	jpeg-devel
+BuildRequires:	mng-devel
+BuildRequires:	png-devel
 Obsoletes:  libendeavour2
 Provides:    libendeavour2
 BuildRoot:  %_tmppath/%{name}-%{version}
@@ -75,15 +82,18 @@ Libraries, include files and other resources you can use to develop
 %setup -q 
 %patch0 -p 1
 %patch1 -p 1
+%patch2 -p 0 -b .zip
+%patch3 -p0 -b .link
 
 %build
-export CFLAGS="%optflags -fPIC"
+export CFLAGS="%optflags -fPIC %ldflags"
 %ifarch x86_64
 %define platform Linux64
 %else
 %define platform Linux
 %endif
 ./configure %{platform} \
+    --CFLAGS="%optflags %ldflags" \
     -v \
     --disable=arch-i686 \
     --enable-debug \
@@ -98,6 +108,8 @@ make \
     EDV_BIN_DIR=%{_libdir}/%{name}%{API} \
     EDV_ARCH_DIR=%{_libdir}/%{name}%{API} \
     MAJOR=%{major} \
+    CC="gcc %ldflags" \
+    CPP="g++ %ldflags" \
     all
  
 %install
