@@ -1,0 +1,59 @@
+diff -Naur --exclude '*~' endeavour-3.1.2/endeavour2/imgio_mng.c endeavour-3.1.2-fix-build-error/endeavour2/imgio_mng.c
+--- endeavour-3.1.2/endeavour2/imgio_mng.c	2009-03-04 07:00:00.000000000 +0100
++++ endeavour-3.1.2-fix-build-error/endeavour2/imgio_mng.c	2009-03-12 23:03:25.000000000 +0100
+@@ -7,6 +7,7 @@
+ #include <sys/stat.h>
+ #include <zlib.h>
+ #include <libmng.h>
++#include <time.h>
+ #if defined(_WIN32)
+ # include "../include/string.h"
+ #endif
+diff -Naur --exclude '*~' endeavour-3.1.2/endeavour2/libendeavour2-base/edv_utils.c endeavour-3.1.2-fix-build-error/endeavour2/libendeavour2-base/edv_utils.c
+--- endeavour-3.1.2/endeavour2/libendeavour2-base/edv_utils.c	2009-03-04 07:00:00.000000000 +0100
++++ endeavour-3.1.2-fix-build-error/endeavour2/libendeavour2-base/edv_utils.c	2009-03-12 22:54:15.000000000 +0100
+@@ -2190,7 +2190,8 @@
+  */
+ gint edv_sync(void)
+ {
+-	return(sync());
++    sync();
++	return 0;
+ }
+ 
+ 
+diff -Naur --exclude '*~' endeavour-3.1.2/endeavour2/libendeavour2-base/Makefile endeavour-3.1.2-fix-build-error/endeavour2/libendeavour2-base/Makefile
+--- endeavour-3.1.2/endeavour2/libendeavour2-base/Makefile	2009-03-04 07:00:00.000000000 +0100
++++ endeavour-3.1.2-fix-build-error/endeavour2/libendeavour2-base/Makefile	2009-03-13 09:34:49.000000000 +0100
+@@ -8,7 +8,8 @@
+ EDV_ARCH_DIR	= $(PREFIX)/lib/endeavour2
+ EDV_INCLUDE_DIR	= $(PREFIX)/lib/endeavour2/include
+ EDV_LIB_DIR	= $(PREFIX)/lib/endeavour2/lib
+-LIB		= libendeavour2-base.so
++LIB		= libendeavour2-base-$(MAJOR).so
++LIB_BASE	= libendeavour2-base.so
+ LIB_CFG_BIN	= endeavour2-base-config
+ LIB_CFG_MAN	= endeavour2-base-config.1.bz2
+ 
+@@ -101,7 +102,8 @@
+ 
+ modules: $(OBJ_C) $(OBJ_CPP)
+ 	@echo -n "Linking modules..."
+-	@$(CPP) $(OBJ_C) $(OBJ_CPP) $(OBJ_SO) $(LIB_DIRS) $(LIBS) -shared -o $(LIB)
++	@$(CPP) $(OBJ_C) $(OBJ_CPP) $(OBJ_SO) $(LIB_DIRS) $(LIBS) -shared -o $(LIB) -Wl,-soname,$(LIB)
++	ln -s $(LIB) $(LIB_BASE)
+ 	@echo -n "   "
+ 	@-$(LS) $(LSFLAGS) $(LIB)
+ 
+diff -Naur --exclude '*~' endeavour-3.1.2/endeavour2/Makefile endeavour-3.1.2-fix-build-error/endeavour2/Makefile
+--- endeavour-3.1.2/endeavour2/Makefile	2009-03-04 07:00:00.000000000 +0100
++++ endeavour-3.1.2-fix-build-error/endeavour2/Makefile	2009-03-12 23:14:50.000000000 +0100
+@@ -70,7 +70,7 @@
+ 
+ modules: $(OBJ_C) $(OBJ_CPP)
+ 	@echo -n "Linking modules..."
+-	@$(CPP) $(OBJ_C) $(OBJ_CPP) -o $(BIN) $(LIB_DIRS) $(LIBS)
++	@$(CPP) $(OBJ_C) $(OBJ_CPP) -o $(BIN) $(LIB_DIRS) -Llibendeavour2-base $(LIBS)
+ 	@echo -n "   "
+ 	@-$(LS) $(LSFLAGS) $(BIN)
+ 

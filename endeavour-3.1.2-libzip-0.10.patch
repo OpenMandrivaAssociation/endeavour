@@ -1,0 +1,20 @@
+--- endeavour2/platforms.ini.zip	2011-05-03 16:25:37.000000000 +0200
++++ endeavour2/platforms.ini	2011-05-03 16:26:46.000000000 +0200
+@@ -474,7 +474,7 @@
+         PlatformFeature = libzip
+                 Description = PKZip Library
+                 MustExist = Preffered
+-                FeatureCFLAGS = -DHAVE_LIBZIP
++                FeatureCFLAGS = -DHAVE_LIBZIP `pkg-config --cflags libzip`
+                 FeatureLIBS = -lzip
+                 FeatureDepend = libzip-devel
+                         DependType = Header
+@@ -680,7 +680,7 @@
+         PlatformFeature = libzip
+                 Description = PKZip Library
+                 MustExist = Preffered
+-                FeatureCFLAGS = -DHAVE_LIBZIP
++                FeatureCFLAGS = -DHAVE_LIBZIP `pkg-config --cflags libzip`
+                 FeatureLIBS = -lzip
+                 FeatureDepend = libzip-devel
+                         DependType = Header

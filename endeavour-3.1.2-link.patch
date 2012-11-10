@@ -1,0 +1,148 @@
+--- endeavour2/utils/Makefile.link	2011-05-03 16:08:35.000000000 +0200
++++ endeavour2/utils/Makefile	2011-05-03 16:18:05.000000000 +0200
+@@ -108,113 +108,113 @@
+ 
+ directory-statistics:
+ 	@echo "Compiling $(@)"
+-	@$(CC) $(CFLAGS) $(CFLAGS_EDV2) $(LIBS_EDV2)		\
++	@$(CC) $(CFLAGS) $(CFLAGS_EDV2) 		\
+         $(@).c							\
+-        -o $(@)
++        -o $(@) $(LIBS_EDV2)
+ 
+ dnd-drag-maker:
+ 	@echo "Compiling $(@)"
+ 	@$(CC) -c $(CFLAGS) $(CFLAGS_GTK) $(@).c
+-	@$(CPP) $(LIBS_GTK) $(@).o				\
++	@$(CPP)  $(@).o				\
+         ../guiutils.o						\
+         ../hview.o ../hviewcb.o					\
+-        -o $(@)
++        -o $(@) $(LIBS_GTK)
+ 
+ dnd-drop-reader:
+ 	@echo "Compiling $(@)"
+ 	@$(CC) -c $(CFLAGS) $(CFLAGS_GTK) $(@).c
+-	@$(CPP) $(LIBS_GTK) $(@).o				\
++	@$(CPP) $(@).o				\
+         ../guiutils.o						\
+         ../hview.o ../hviewcb.o					\
+-        -o $(@)
++        -o $(@) $(LIBS_GTK)
+ 
+ file-selector:
+ 	@echo "Compiling $(@)"
+ 	@$(CC) -c $(CFLAGS) $(CFLAGS_GTK) $(@).c
+-	@$(CPP) $(LIBS_GTK) $(@).o				\
++	@$(CPP) $(@).o				\
+         ../fb.o							\
+ 	../cdialog.o ../guiutils.o ../fprompt.o ../pulist.o	\
+         ../string.o ../disk.o ../fio.o				\
+-        -o $(@)
++        -o $(@) $(LIBS_GTK)
+ 
+ memory-usage-estimator:
+ 	@echo "Compiling $(@)"
+ 	@$(CC) -c $(CFLAGS) $(CFLAGS_GTK) $(@).c
+-	@$(CPP) $(LIBS_GTK) $(@).o				\
++	@$(CPP) $(@).o				\
+         ../guiutils.o						\
+-        -o $(@)
++        -o $(@) $(LIBS_GTK)
+ 
+ message-dialog:
+ 	@echo "Compiling $(@)"
+ 	@$(CC) -c $(CFLAGS) $(CFLAGS_GTK) $(@).c
+-	@$(CPP) $(LIBS_GTK) $(@).o				\
++	@$(CPP) $(@).o				\
+ 	../guiutils.o ../cdialog.o ../string.o			\
+-        -o $(@)
++        -o $(@) $(LIBS_GTK)
+ 
+ mls:
+ 	@echo "Compiling $(@)"
+-	@$(CC) $(CFLAGS) $(CFLAGS_EDV2) $(LIBS_EDV2)		\
++	@$(CC) $(CFLAGS) $(CFLAGS_EDV2)		\
+         $(@).c							\
+-        -o $(@)
++        -o $(@) $(LIBS_EDV2)
+ 
+ notify:
+ 	@echo "Compiling $(@)"
+-	@$(CC) $(CFLAGS) $(CFLAGS_EDV2) $(LIBS_EDV2)		\
++	@$(CC) $(CFLAGS) $(CFLAGS_EDV2) 		\
+         $(@).c							\
+-        -o $(@)
++        -o $(@) $(LIBS_EDV2)
+ 
+ open:
+ 	@echo "Compiling $(@)"
+-	@$(CC) $(CFLAGS) $(CFLAGS_EDV2) $(LIBS_EDV2)		\
++	@$(CC) $(CFLAGS) $(CFLAGS_EDV2) 		\
+         $(@).c							\
+-        -o $(@)
++        -o $(@) $(LIBS_EDV2)
+ 
+ properties:
+ 	@echo "Compiling $(@)"
+-	@$(CC) $(CFLAGS) $(CFLAGS_EDV2) $(LIBS_EDV2)		\
++	@$(CC) $(CFLAGS) $(CFLAGS_EDV2) 		\
+         $(@).c							\
+-        -o $(@)
++        -o $(@) $(LIBS_EDV2)
+ 
+ purge:
+ 	@echo "Compiling $(@)"
+-	@$(CC) $(CFLAGS) $(CFLAGS_EDV2) $(LIBS_EDV2)		\
++	@$(CC) $(CFLAGS) $(CFLAGS_EDV2)		\
+         $(@).c							\
+-        -o $(@)
++        -o $(@) $(LIBS_EDV2)
+ 
+ recover:
+ 	@echo "Compiling $(@)"
+-	@$(CC) $(CFLAGS) $(CFLAGS_EDV2) $(LIBS_EDV2)		\
++	@$(CC) $(CFLAGS) $(CFLAGS_EDV2) 		\
+         $(@).c							\
+-        -o $(@)
++        -o $(@) $(LIBS_EDV2)
+ 
+ recycle:
+ 	@echo "Compiling $(@)"
+-	@$(CC) $(CFLAGS) $(CFLAGS_EDV2) $(LIBS_EDV2)		\
++	@$(CC) $(CFLAGS) $(CFLAGS_EDV2) 		\
+         $(@).c							\
+-        -o $(@)
++        -o $(@) $(LIBS_EDV2)
+ 
+ rls:
+ 	@echo "Compiling $(@)"
+-	@$(CC) $(CFLAGS) $(CFLAGS_EDV2) $(LIBS_EDV2)		\
++	@$(CC) $(CFLAGS) $(CFLAGS_EDV2) 		\
+         $(@).c							\
+-        -o $(@)
++        -o $(@) $(LIBS_EDV2)
+ 
+ splash:
+ 	@echo "Compiling $(@)"
+ 	@$(CC) -c $(CFLAGS) $(CFLAGS_GTK) $(@).c
+-	@$(CPP) $(LIBS_GTK) $(@).o				\
++	@$(CPP)  $(@).o				\
+         ../guiutils.o ../guirgbimg.o				\
+         ../splash.o						\
+-        -o $(@)
++        -o $(@) $(LIBS_GTK)
+ 
+ style-editor:
+ 	@echo "Compiling $(@)"
+ 	@$(CC) -c $(CFLAGS) $(CFLAGS_GTK) $(@).c
+-	@$(CPP) $(LIBS_GTK) $(@).o				\
++	@$(CPP)  $(@).o				\
+         ../guiutils.o ../cdialog.o ../fprompt.o ../pulist.o	\
+         ../fb.o ../csd.o ../fsd.o ../style_edit.o		\
+         ../string.o ../fio.o ../disk.o				\
+-        -o $(@)
++        -o $(@) $(LIBS_GTK)
+ 
+ 
+ # Install Rules:

@@ -1,0 +1,3655 @@
+diff -Naur endeavour-3.1.2/endeavour2/con_msg.c endeavour-3.1.2-fix-lib64-build/endeavour2/con_msg.c
+--- endeavour-3.1.2/endeavour2/con_msg.c	2009-03-04 07:00:00.000000000 +0100
++++ endeavour-3.1.2-fix-lib64-build/endeavour2/con_msg.c	2009-03-13 11:06:55.000000000 +0100
+@@ -1482,7 +1482,7 @@
+ )
+ {
+ 	struct stat stat_buf;
+-        fd_set fd_set;
++        fd_set my_fd_set;
+         struct timeval tv;
+ 	gint		i,
+ 			buf_len,
+@@ -1496,13 +1496,13 @@
+ 	    return(FALSE);
+ 
+ 	/* No data waiting to be read? */
+-	FD_ZERO(&fd_set);
+-	FD_SET((int)fd, &fd_set);
++	FD_ZERO(&my_fd_set);
++	FD_SET((int)fd, &my_fd_set);
+         tv.tv_sec = 0;
+         tv.tv_usec = 0;
+         if(select(
+ 	    (int)fd + 1,			/* Highest number descriptor + 1 */
+-	    &fd_set,				/* Read descriptor set */
++	    &my_fd_set,				/* Read descriptor set */
+ 	    NULL,				/* No write descriptor set */
+ 	    NULL,				/* No exception descriptor set */
+             &tv
+diff -Naur endeavour-3.1.2/endeavour2/con_msg.c~ endeavour-3.1.2-fix-lib64-build/endeavour2/con_msg.c~
+--- endeavour-3.1.2/endeavour2/con_msg.c~	1970-01-01 01:00:00.000000000 +0100
++++ endeavour-3.1.2-fix-lib64-build/endeavour2/con_msg.c~	2009-03-13 10:40:30.000000000 +0100
+@@ -0,0 +1,2275 @@
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <ctype.h>
++#include <sys/types.h>
++#include <sys/time.h>
++#include <sys/stat.h>
++#include <fcntl.h>
++#include <gtk/gtk.h>
++#include <gdk/gdkkeysyms.h>
++#include <unistd.h>
++
++#include "guiutils.h"
++#include "con_msg.h"
++
++#include "images/icon_info_32x32.xpm"
++#include "images/icon_warning_32x32.xpm"
++
++#include "images/icon_ok_20x20.xpm"
++#include "images/icon_cancel_20x20.xpm"
++#include "images/icon_clear_20x20.xpm"
++
++
++typedef struct _ConMsgDlg		ConMsgDlg;
++#define CON_MSG_DLG(p)			((ConMsgDlg *)(p))
++typedef struct _ConMsgCore		ConMsgCore;
++#define CON_MSG_CORE(p)			((ConMsgCore *)(p))
++
++
++typedef enum {
++	CON_MSG_CORE_SHOW_STDOUT	= (1 << 0),
++	CON_MSG_CORE_SHOW_STDERR	= (1 << 1)
++} ConMsgCoreFlags;
++
++
++typedef enum {
++	CON_MSG_DLG_COLOR_BLACK,
++	CON_MSG_DLG_COLOR_WHITE,
++	CON_MSG_DLG_COLOR_GRAY,
++	CON_MSG_DLG_COLOR_DARK_GRAY,
++	CON_MSG_DLG_COLOR_RED,
++	CON_MSG_DLG_COLOR_GREEN,
++	CON_MSG_DLG_COLOR_BLUE,
++	CON_MSG_DLG_COLOR_YELLOW,
++	CON_MSG_DLG_COLOR_MAGENTA,
++	CON_MSG_DLG_COLOR_CYAN,
++	CON_MSG_DLG_COLOR_DARK_RED,
++	CON_MSG_DLG_COLOR_DARK_GREEN,
++	CON_MSG_DLG_COLOR_DARK_BLUE,
++	CON_MSG_DLG_COLOR_DARK_YELLOW,
++	CON_MSG_DLG_COLOR_DARK_MAGENTA,
++	CON_MSG_DLG_COLOR_DARK_CYAN
++} ConMsgDlgColors;
++#define CON_MSG_DLG_NCOLORS		16
++
++
++/* Utilities */
++static const gchar *ConMsgStringNextEscape(const gchar *s);
++static const gchar *ConMsgDlgParseANSIColorString(
++	ConMsgDlg *d,
++	const gchar *s,
++	GdkFont **font_rtn,
++	GdkColor **c_fg_rtn,
++	GdkColor **c_bg_rtn
++);
++
++/* Callbacks */
++static gint ConMsgDlgDeleteEventCB(
++	GtkWidget *widget, GdkEvent *event, gpointer data
++);
++static gint ConMsgDlgTextEventCB(
++	GtkWidget *widget, GdkEvent *event, gpointer data
++);
++static void ConMsgDlgOKCB(GtkWidget *widget, gpointer data);
++static void ConMsgDlgNoMoreMessagesCB(GtkWidget *widget, gpointer data);
++static void ConMsgDlgClearCB(GtkWidget *widget, gpointer data);
++
++/* Console Message Dialog */
++static ConMsgDlg *ConMsgDlgNew(
++	ConMsgCore *core,
++	const gchar *toplevel_widget_name,
++	const gchar *title,
++	guint8 **icon_data,
++	const gchar *font_name,
++	const gint columns,
++	const gint lines
++);
++static void ConMsgDlgMsgAppend(
++	ConMsgDlg *d,
++	const gchar *msg
++);
++static void ConMsgDlgUpdateWidgets(ConMsgDlg *d);
++static void ConMsgDlgDelete(ConMsgDlg *d);
++
++static gboolean ConMsgProcessDescriptor(
++	ConMsgCore *core,
++	const gint fd,
++	ConMsgDlg **d_ptr,
++	const gchar *toplevel_widget_name,
++	const gchar *title,
++	guint8 **icon_data
++);
++static gint ConMsgMessageDescriptorCheckTimeoutCB(gpointer data);
++static void ConMsgMessageDescriptorsInitialize(ConMsgCore *core);
++
++gint ConMsgInit(
++	const gchar *name,
++	const gchar *font_name,
++	const gint columns,
++	const gint lines,
++	const gboolean show_stdout,
++	const gboolean show_stderr
++);
++gint ConMsgReset(
++	const gchar *name,
++	const gchar *font_name,
++	const gint columns,
++	const gint lines,
++	const gboolean show_stdout,
++	const gboolean show_stderr
++);
++const gchar *ConMsgGetName(void);
++const gchar *ConMsgGetFontName(void);
++gint ConMsgGetColumns(void);
++gint ConMsgGetLines(void);
++gboolean ConMsgGetShowStdOut(void);
++gboolean ConMsgGetShowStdErr(void);
++void ConMsgShutdown(void);
++
++void ConMsgStdOutDlgSendMessage(const gchar *msg);
++void ConMsgStdErrDlgSendMessage(const gchar *msg);
++void ConMsgStdOutDlgMap(void);
++void ConMsgStdErrDlgMap(void);
++
++
++/*
++ *	Message Dialog:
++ */
++struct _ConMsgDlg {
++
++	GtkWidget	*toplevel;
++	GtkAccelGroup	*accelgrp;
++	gint		freeze_count;
++	GdkColormap	*colormap;
++	GdkColor	color[CON_MSG_DLG_NCOLORS];
++	GdkFont		*font_normal,
++			*font_bold,
++			*font_underline,
++			*font_bold_underline;
++	ConMsgCore	*core;
++
++	GtkWidget	*text,
++			*ok_btn,
++			*no_more_messages_btn,
++			*clear_btn;
++
++};
++
++/*
++ *	Core:
++ */
++struct _ConMsgCore {
++
++	ConMsgCoreFlags	flags;
++	gint		freeze_count;
++
++	gchar		*prog_name,
++			*stdout_dialog_title,
++			*stderr_dialog_title,
++			*font_name;
++
++	gint		terminal_columns,
++			terminal_lines;
++
++	gint		stdout_fd_r,		/* Our read-end of stdout */
++			stderr_fd_r;		/* Our read-end of stdout */
++
++	guint		msg_check_toid;
++
++	ConMsgDlg	*stdout_dialog,
++			*stderr_dialog;
++
++};
++
++static ConMsgCore	*con_msg_core = NULL;
++
++
++/*
++ *	Default Message Dialog title postfix:
++ */
++#define CON_MSG_DLG_STDOUT_TITLE_POSTFIX	\
++					"Message"
++#define CON_MSG_DLG_STDERR_TITLE_POSTFIX	\
++					"Error Message"
++
++/*
++ *	Default number of columns and lines when user and environment
++ *	variables are not specified:
++ */
++#define CON_MSG_DLG_DEF_COLUMNS		80
++#define CON_MSG_DLG_DEF_LINES		30
++
++/*
++ *	Characters:
++ */
++#define CON_MSG_CHAR_BELL		0x07
++#define CON_MSG_CHAR_BACKSPACE		0x08
++#define CON_MSG_CHAR_NEWLINE		0x0A
++#define CON_MSG_CHAR_RETURN		0x0D
++#define CON_MSG_CHAR_ESCAPE		0x1B
++#define CON_MSG_CHAR_DELETE		0x7F
++
++/*
++ *	Message Check Interval (in milliseconds):
++ */
++#define CON_MSG_MESSAGE_CHECK_INT	100l
++
++
++#define ATOI(s)         (((s) != NULL) ? atoi(s) : 0)
++#define ATOL(s)         (((s) != NULL) ? atol(s) : 0)
++#define ATOF(s)         (((s) != NULL) ? atof(s) : 0.0f)
++#define STRDUP(s)       (((s) != NULL) ? g_strdup(s) : NULL)
++
++#define MAX(a,b)        (((a) > (b)) ? (a) : (b))
++#define MIN(a,b)        (((a) < (b)) ? (a) : (b))
++#define CLIP(a,l,h)     (MIN(MAX((a),(l)),(h)))
++#define STRLEN(s)       (((s) != NULL) ? (gint)strlen(s) : 0)
++#define STRISEMPTY(s)   (((s) != NULL) ? (*(s) == '\0') : TRUE)
++
++#define UNLINK(p)	(STRISEMPTY(p) ? -1 : (gint)unlink((const char *)(p)))
++#define CLOSE(_fd_)	(((_fd_) > -1) ? (gint)close((int)(_fd_)) : -1)
++
++
++/*
++ *	Seeks to the next escape character or end of string.
++ */
++static const gchar *ConMsgStringNextEscape(const gchar *s)
++{
++	while(*s != '\0')
++	{
++	    if(*s == CON_MSG_CHAR_ESCAPE)
++		return(s);
++	    s++;
++	}
++	return(s);
++}
++
++/*
++ *	Parses the ANSI color string.
++ *
++ *	The s specifies the string which should be positioned at
++ *	the escape character.
++ *
++ *	Returns the string position past the ANSI color statement or
++ *	at the end of string.
++ */
++static const gchar *ConMsgDlgParseANSIColorString(
++	ConMsgDlg *d,
++	const gchar *s,
++	GdkFont **font_rtn,
++	GdkColor **c_fg_rtn,
++	GdkColor **c_bg_rtn
++)
++{
++	gint		attr,
++			val;
++	const gchar *s_end;
++
++	/* Seek past the escape character */
++	if(*s == CON_MSG_CHAR_ESCAPE)
++	    s++;
++
++	/* Seek past the first '[' character */
++	if(*s == '[')
++	    s++;
++	else
++	    return(s);	/* Not an ANSI color string escape sequence */
++
++	/* Seek to the end of the ANSI specification or end of string */
++	s_end = s;
++	while(*s_end != '\0')
++	{
++	    if(*s_end == 'm')
++	    {
++		s_end++;
++	        break;
++	    }
++	    s_end++;
++	}
++
++	/* Get the attribute */
++	attr = (gint)atoi((const char *)s);
++
++	/* Seek s past the ';' deliminator or end of string */
++	while((*s != '\0') && (s < s_end))
++	{
++	    if(*s == ';')
++	    {
++		s++;
++		break;
++	    }
++	    s++;
++	}
++
++	/* Get the color value */
++	if(isdigit((int)*s))
++	    val = (gint)atoi((const char *)s);
++	else
++	    val = -1;
++
++	/* If the attribute is 30 or greater and the value is 1 or
++	 * greater than swap the attribute and value values
++	 */
++	if((attr >= 30) && (val >= 1))
++	{
++	    gint _val = val;
++	    val = attr;
++	    attr = _val;
++	}
++
++	*font_rtn = d->font_normal;
++	*c_fg_rtn = NULL;
++	*c_bg_rtn = NULL;
++
++	switch(val)
++	{
++	  case -1:				/* Attribute only */
++	    if(attr == 1)
++		*font_rtn = d->font_bold;
++	    else if((attr == 4) || (attr == 6))
++		*font_rtn = d->font_underline;
++	    else if(attr == 5)
++		*c_bg_rtn = &d->color[CON_MSG_DLG_COLOR_DARK_GRAY];
++	    else if(attr == 7)
++		*c_bg_rtn = &d->color[CON_MSG_DLG_COLOR_WHITE];
++	    break;
++
++	  case 0:				/* Always normal */
++	    break;
++
++	  case 1:				/* Always bold */
++	    *font_rtn = d->font_bold;
++	    if(attr == 1)
++		*font_rtn = d->font_bold;	/* Redundant */
++	    else if((attr == 4) || (attr == 6))
++		*font_rtn = d->font_bold_underline;
++	    else if(attr == 5)
++	    {
++		*c_fg_rtn = &d->color[CON_MSG_DLG_COLOR_WHITE];
++		*c_bg_rtn = &d->color[CON_MSG_DLG_COLOR_DARK_GRAY];
++	    }
++	    else if(attr == 7)
++	    {
++		*c_fg_rtn = &d->color[CON_MSG_DLG_COLOR_BLACK];
++		*c_bg_rtn = &d->color[CON_MSG_DLG_COLOR_WHITE];
++	    }
++	    break;
++
++	  case 2:
++	  case 3:
++	    if(attr == 1)
++		*font_rtn = d->font_bold;
++	    else if((attr == 4) || (attr == 6))
++		*font_rtn = d->font_underline;
++	    else if(attr == 5)
++		*c_bg_rtn = &d->color[CON_MSG_DLG_COLOR_DARK_GRAY];
++	    else if(attr == 7)
++	    {
++		*c_fg_rtn = &d->color[CON_MSG_DLG_COLOR_BLACK];
++		*c_bg_rtn = &d->color[CON_MSG_DLG_COLOR_WHITE];
++	    }
++	    break;
++
++	  case 4:				/* Always underline */
++	  case 6:				/* Always overline */
++	    *font_rtn = d->font_underline;
++	    if(attr == 1)
++		*font_rtn = d->font_bold_underline;
++	    else if((attr == 4) || (attr == 6))
++		*font_rtn = d->font_underline;	/* Redundant */
++	    else if(attr == 5)
++		*c_bg_rtn = &d->color[CON_MSG_DLG_COLOR_DARK_GRAY];
++	    else if(attr == 7)
++	    {
++		*c_fg_rtn = &d->color[CON_MSG_DLG_COLOR_BLACK];
++		*c_bg_rtn = &d->color[CON_MSG_DLG_COLOR_WHITE];
++	    }
++	    break;
++
++	  case 5:				/* Background gray (low intensity) */
++	    *c_bg_rtn = &d->color[CON_MSG_DLG_COLOR_DARK_GRAY];
++	    if(attr == 1)
++		*font_rtn = d->font_bold;
++	    else if((attr == 4) || (attr == 6))
++		*font_rtn = d->font_underline;
++	    else if(attr == 5)
++		*c_bg_rtn = &d->color[CON_MSG_DLG_COLOR_DARK_GRAY];	/* Redundant */
++	    else if(attr == 7)
++	    {
++		*c_fg_rtn = &d->color[CON_MSG_DLG_COLOR_BLACK];
++		*c_bg_rtn = &d->color[CON_MSG_DLG_COLOR_WHITE];
++	    }
++	    break;
++
++	  case 7:				/* Background white (high intensity) */
++	    *c_fg_rtn = &d->color[CON_MSG_DLG_COLOR_BLACK];
++	    *c_bg_rtn = &d->color[CON_MSG_DLG_COLOR_WHITE];
++	    if(attr == 1)
++		*font_rtn = d->font_bold;
++	    else if((attr == 4) || (attr == 6))
++		*font_rtn = d->font_underline;
++	    break;
++
++	  case 30:				/* Black */
++	    *c_fg_rtn = &d->color[CON_MSG_DLG_COLOR_BLACK];
++	    if(attr == 1)
++		*c_fg_rtn = &d->color[CON_MSG_DLG_COLOR_DARK_GRAY];
++	    else if((attr == 4) || (attr == 6))
++		*font_rtn = d->font_underline;
++	    else if(attr == 5)
++		*c_bg_rtn = &d->color[CON_MSG_DLG_COLOR_DARK_GRAY];
++	    else if(attr == 7)
++	    {
++		*c_fg_rtn = NULL;
++		*c_bg_rtn = &d->color[CON_MSG_DLG_COLOR_BLACK];
++	    }
++	    break;
++
++	  case 31:				/* Red */
++	    *c_fg_rtn = &d->color[CON_MSG_DLG_COLOR_DARK_RED];
++	    if(attr == 1)
++		*c_fg_rtn = &d->color[CON_MSG_DLG_COLOR_RED];
++	    else if((attr == 4) || (attr == 6))
++		*font_rtn = d->font_underline;
++	    else if(attr == 5)
++		*c_bg_rtn = &d->color[CON_MSG_DLG_COLOR_DARK_GRAY];
++	    else if(attr == 7)
++	    {
++		*c_fg_rtn = NULL;
++		*c_bg_rtn = &d->color[CON_MSG_DLG_COLOR_RED];
++	    }
++	    break;
++
++	  case 32:				/* Green */
++	    *c_fg_rtn = &d->color[CON_MSG_DLG_COLOR_DARK_GREEN];
++	    if(attr == 1)
++		*c_fg_rtn = &d->color[CON_MSG_DLG_COLOR_GREEN];
++	    else if((attr == 4) || (attr == 6))
++		*font_rtn = d->font_underline;
++	    else if(attr == 5)
++		*c_bg_rtn = &d->color[CON_MSG_DLG_COLOR_DARK_GRAY];
++	    else if(attr == 7)
++	    {
++		*c_fg_rtn = NULL;
++		*c_bg_rtn = &d->color[CON_MSG_DLG_COLOR_GREEN];
++	    }
++	    break;
++
++	  case 33:				/* Yellow */
++	    *c_fg_rtn = &d->color[CON_MSG_DLG_COLOR_DARK_YELLOW];
++	    if(attr == 1)
++		*c_fg_rtn = &d->color[CON_MSG_DLG_COLOR_YELLOW];
++	    else if((attr == 4) || (attr == 6))
++		*font_rtn = d->font_underline;
++	    else if(attr == 5)
++		*c_bg_rtn = &d->color[CON_MSG_DLG_COLOR_DARK_GRAY];
++	    else if(attr == 7)
++	    {
++		*c_fg_rtn = NULL;
++		*c_bg_rtn = &d->color[CON_MSG_DLG_COLOR_YELLOW];
++	    }
++	    break;
++
++	  case 34:				/* Blue */
++	    *c_fg_rtn = &d->color[CON_MSG_DLG_COLOR_DARK_BLUE];
++	    if(attr == 1)
++		*c_fg_rtn = &d->color[CON_MSG_DLG_COLOR_BLUE];
++	    else if((attr == 4) || (attr == 6))
++		*font_rtn = d->font_underline;
++	    else if(attr == 5)
++		*c_bg_rtn = &d->color[CON_MSG_DLG_COLOR_DARK_GRAY];
++	    else if(attr == 7)
++	    {
++		*c_fg_rtn = NULL;
++		*c_bg_rtn = &d->color[CON_MSG_DLG_COLOR_BLUE];
++	    }
++	    break;
++
++	  case 35:				/* Magenta */
++	    *c_fg_rtn = &d->color[CON_MSG_DLG_COLOR_DARK_MAGENTA];
++	    if(attr == 1)
++		*c_fg_rtn = &d->color[CON_MSG_DLG_COLOR_MAGENTA];
++	    else if((attr == 4) || (attr == 6))
++		*font_rtn = d->font_underline;
++	    else if(attr == 5)
++		*c_bg_rtn = &d->color[CON_MSG_DLG_COLOR_DARK_GRAY];
++	    else if(attr == 7)
++	    {
++		*c_fg_rtn = NULL;
++		*c_bg_rtn = &d->color[CON_MSG_DLG_COLOR_MAGENTA];
++	    }
++	    break;
++
++	  case 36:				/* Cyan */
++	    *c_fg_rtn = &d->color[CON_MSG_DLG_COLOR_DARK_CYAN];
++	    if(attr == 1)
++		*c_fg_rtn = &d->color[CON_MSG_DLG_COLOR_CYAN];
++	    else if((attr == 4) || (attr == 6))
++		*font_rtn = d->font_underline;
++	    else if(attr == 5)
++		*c_bg_rtn = &d->color[CON_MSG_DLG_COLOR_DARK_GRAY];
++	    else if(attr == 7)
++	    {
++		*c_fg_rtn = NULL;
++		*c_bg_rtn = &d->color[CON_MSG_DLG_COLOR_CYAN];
++	    }
++	    break;
++
++	  case 37:				/* Gray */
++	    *c_fg_rtn = &d->color[CON_MSG_DLG_COLOR_GRAY];
++	    if(attr == 1)
++		*c_fg_rtn = &d->color[CON_MSG_DLG_COLOR_WHITE];
++	    else if((attr == 4) || (attr == 6))
++		*font_rtn = d->font_underline;
++	    else if(attr == 5)
++		*c_bg_rtn = &d->color[CON_MSG_DLG_COLOR_DARK_GRAY];
++	    else if(attr == 7)
++	    {
++		*c_fg_rtn = NULL;
++		*c_bg_rtn = &d->color[CON_MSG_DLG_COLOR_GRAY];
++	    }
++	    break;
++
++	  case 38:				/* White */
++	  case 39:
++	    *c_fg_rtn = &d->color[CON_MSG_DLG_COLOR_WHITE];
++	    if(attr == 1)
++		*font_rtn = d->font_bold;
++	    else if((attr == 4) || (attr == 6))
++		*font_rtn = d->font_underline;
++	    else if(attr == 5)
++		*c_bg_rtn = &d->color[CON_MSG_DLG_COLOR_DARK_GRAY];
++	    else if(attr == 7)
++	    {
++		*c_fg_rtn = NULL;
++		*c_bg_rtn = &d->color[CON_MSG_DLG_COLOR_WHITE];
++	    }
++	    break;
++	}
++
++	return(s_end);
++}
++
++
++/*
++ *	Toplevel GtkWindow "delete_event" signal callback.
++ */
++static gint ConMsgDlgDeleteEventCB(
++	GtkWidget *widget, GdkEvent *event, gpointer data
++)
++{
++	ConMsgDlg *d = CON_MSG_DLG(data);
++	if(d == NULL)
++	    return(FALSE);
++
++	if(d->freeze_count > 0)
++	    return(TRUE);
++
++	ConMsgDlgOKCB(d->ok_btn, d);
++
++	return(TRUE);
++}
++
++/*
++ *	GtkText event signal callback.
++ */
++static gint ConMsgDlgTextEventCB(
++	GtkWidget *widget, GdkEvent *event, gpointer data
++)
++{
++	gint status = FALSE;
++	GdkEventButton *button;
++	GtkText *text;
++	ConMsgDlg *d = CON_MSG_DLG(data);
++	if((widget == NULL) || (event == NULL) || (d == NULL))
++	    return(status);
++
++	if(d->freeze_count > 0)
++	    return(status);
++
++	text = GTK_TEXT(widget);
++
++	switch((gint)event->type)
++	{
++	  case GDK_BUTTON_PRESS:
++	    button = (GdkEventButton *)event;
++	    switch(button->button)
++	    {
++	      case GDK_BUTTON4:
++		/* Scroll up */
++		if(text->vadj != NULL)
++		{
++		    GtkAdjustment *adj = text->vadj;
++		    const gfloat inc = MAX(
++			(0.25f * adj->page_size),
++			adj->step_increment  
++		    );
++		    gfloat v = adj->value - inc;
++		    if(v > (adj->upper - adj->page_size))
++			v = adj->upper - adj->page_size;
++		    if(v < adj->lower)
++			v = adj->lower;
++		    gtk_adjustment_set_value(adj, v);
++		}     
++		/* Need to mark the GtkText button as 0 or else it will
++		 * keep marking
++		 */
++		text->button = 0;
++		gtk_grab_remove(widget);
++		gtk_signal_emit_stop_by_name(
++		    GTK_OBJECT(widget), "button_press_event"
++		);
++		status = TRUE;
++		break;
++
++	      case GDK_BUTTON5:
++		/* Scroll down */
++		if(text->vadj != NULL)
++		{
++		    GtkAdjustment *adj = text->vadj;
++		    const gfloat inc = MAX(
++			(0.25f * adj->page_size),
++			adj->step_increment
++		    );
++		    gfloat v = adj->value + inc;
++		    if(v > (adj->upper - adj->page_size))
++			v = adj->upper - adj->page_size;
++		    if(v < adj->lower)
++			v = adj->lower;
++		    gtk_adjustment_set_value(adj, v);
++		}
++		/* Need to mark the GtkText button as 0 or else it will
++		 * keep marking
++		 */
++		text->button = 0;
++		gtk_grab_remove(widget);
++		gtk_signal_emit_stop_by_name(
++		    GTK_OBJECT(widget), "button_press_event"
++		);
++		status = TRUE;
++		break;
++	    }
++	    break;
++
++	  case GDK_BUTTON_RELEASE:
++	    button = (GdkEventButton *)event;
++	    switch(button->button)
++	    {
++	      case GDK_BUTTON4:
++		/* Need to mark the GtkText button as 0 or else it will
++		 * keep marking
++		 */
++		text->button = 0;
++		gtk_grab_remove(widget);
++		gtk_signal_emit_stop_by_name(
++		    GTK_OBJECT(widget), "button_release_event"
++		);
++		status = TRUE;
++		break;
++	      case GDK_BUTTON5:
++		/* Need to mark the GtkText button as 0 or else it will
++		 * keep marking
++		 */
++		text->button = 0;
++		gtk_grab_remove(widget);
++		gtk_signal_emit_stop_by_name(
++		    GTK_OBJECT(widget), "button_release_event"
++		);
++		status = TRUE;
++		break;
++	    }
++	    break;
++	}
++
++	return(status);
++}
++
++/*
++ *	OK callback.
++ */
++static void ConMsgDlgOKCB(GtkWidget *widget, gpointer data)
++{
++	ConMsgCore *core;
++	ConMsgDlg *d = CON_MSG_DLG(data);
++	if(d == NULL)
++	    return;
++
++	if(d->freeze_count > 0)
++	    return;
++
++	core = d->core;
++
++	/* Reset the global variable that references this Message
++	 * Dialog and delete this Message Dialog
++	 */
++	if(d == core->stdout_dialog)
++	    core->stdout_dialog = NULL;
++	else if(d == core->stderr_dialog)
++	    core->stderr_dialog = NULL;
++
++	ConMsgDlgDelete(d);
++}
++
++/*
++ *	No More Messages callback.
++ */
++static void ConMsgDlgNoMoreMessagesCB(GtkWidget *widget, gpointer data)
++{                          
++	ConMsgCore *core;
++	ConMsgDlg *d = CON_MSG_DLG(data);
++	if(d == NULL)
++	    return;
++
++	if(d->freeze_count > 0)
++	    return;
++
++	core = d->core;
++
++	/* Reset the global variable that references this Message Dialog
++	 * and delete this Message Dialog
++	 */
++	if(d == core->stdout_dialog)
++	{
++	    core->flags &= ~CON_MSG_CORE_SHOW_STDOUT;
++	    core->stdout_dialog = NULL;
++	}
++	else if(d == core->stderr_dialog)
++	{
++	    core->flags &= ~CON_MSG_CORE_SHOW_STDERR;
++	    core->stderr_dialog = NULL;
++	}
++
++	ConMsgDlgDelete(d);
++}
++
++/*
++ *	Clear callback.
++ */
++static void ConMsgDlgClearCB(GtkWidget *widget, gpointer data)
++{
++	GtkText *text;
++	ConMsgDlg *d = CON_MSG_DLG(data);
++	if(d == NULL)
++	    return;
++
++	if(d->freeze_count > 0)
++	    return;
++
++	text = GTK_TEXT(d->text);
++
++	d->freeze_count++;
++
++	gtk_events_process();
++
++	gtk_text_freeze(text);
++	gtk_text_set_point(text, 0);
++	gtk_text_forward_delete(
++	    text,
++	    gtk_text_get_length(text)
++	);
++	gtk_text_thaw(text);
++
++	gtk_events_process();
++
++	ConMsgDlgUpdateWidgets(d);
++
++	d->freeze_count--;
++}
++
++
++/*
++ *	Creates a new Message Dialog.
++ *
++ *	If font_name is NULL then the default fixed width font will
++ *	be used.
++ *
++ *	If columns is not positive then the default number of columns
++ *	will be used.
++ *
++ *	If lines is not positive then the default number of lines will
++ *	be used.
++ */
++static ConMsgDlg *ConMsgDlgNew(
++	ConMsgCore *core,
++	const gchar *toplevel_widget_name,
++	const gchar *title,
++	guint8 **icon_data,
++	const gchar *font_name,
++	const gint columns,
++	const gint lines
++)
++{
++	const gint	border_major = 5,
++			border_minor = 2;
++	gint		_columns = columns,
++			_lines = lines,
++			font_width, font_height;
++	GdkColormap *colormap;
++	GdkWindow *window;
++	GtkAccelGroup *accelgrp;
++	GtkStyle *style;
++	GtkWidget *w, *parent, *parent2, *toplevel, *sb;
++	GtkText *text;
++	ConMsgDlg *d;
++
++	if(core == NULL)
++	    return(NULL);
++
++	if(_columns <= 0)
++	    _columns = CON_MSG_DLG_DEF_COLUMNS;
++	if(_lines <= 0)
++	    _lines = CON_MSG_DLG_DEF_LINES;
++
++	/* Create the Message Dialog */
++	d = CON_MSG_DLG(g_malloc0(sizeof(ConMsgDlg))); 
++	if(d == NULL)  
++	    return(NULL);
++
++	d->toplevel = toplevel = gtk_window_new(GTK_WINDOW_DIALOG);
++	d->accelgrp = accelgrp = gtk_accel_group_new();
++/*
++	d->freeze_count = 0;
++	d->font_normal = NULL;
++	d->font_bold = NULL;
++	d->font_underline = NULL;
++	d->font_bold_underline = NULL;
++ */
++	d->core = core;
++
++	d->freeze_count++;
++
++	/* Toplevel GtkWindow */
++	w = toplevel;
++	if(!STRISEMPTY(core->prog_name))
++	    gtk_window_set_wmclass(
++		GTK_WINDOW(w), "dialog", core->prog_name
++	    );
++	gtk_widget_set_name(w, toplevel_widget_name);
++	gtk_window_set_policy(GTK_WINDOW(w), TRUE, TRUE, TRUE);
++	gtk_window_set_position(GTK_WINDOW(w), GTK_WIN_POS_MOUSE);
++	if(title != NULL)
++	    gtk_window_set_title(GTK_WINDOW(w), title);
++	gtk_widget_realize(w);
++	window = w->window;
++	if(window != NULL)
++	{
++	    gdk_window_set_decorations(
++		window,
++		GDK_DECOR_BORDER | GDK_DECOR_MENU | GDK_DECOR_TITLE |
++		GDK_DECOR_MINIMIZE
++	    );
++	    gdk_window_set_functions(
++		window,
++		GDK_FUNC_MOVE | GDK_FUNC_MINIMIZE | GDK_FUNC_CLOSE
++	    );
++	    GUISetWMIcon(window, icon_data);
++	}
++	style = gtk_widget_get_style(w);
++	gtk_signal_connect(
++	    GTK_OBJECT(w), "delete_event",
++	    GTK_SIGNAL_FUNC(ConMsgDlgDeleteEventCB), d
++	);
++	gtk_window_add_accel_group(GTK_WINDOW(w), accelgrp);
++	parent = w;
++
++	/* Allocate the colors */
++	d->colormap = colormap = GDK_COLORMAP_REF(gtk_widget_get_colormap(w));
++	if(colormap != NULL)
++	{
++	    GdkColor *c;
++
++	    c = &d->color[CON_MSG_DLG_COLOR_BLACK];
++	    GDK_COLOR_SET_COEFF(
++		c,
++		0.0f,
++		0.0f,
++		0.0f
++	    );
++	    GDK_COLORMAP_ALLOC_COLOR(colormap, c);
++
++	    c = &d->color[CON_MSG_DLG_COLOR_WHITE];
++	    GDK_COLOR_SET_COEFF(
++		c,
++		1.0f,
++		1.0f,
++		1.0f
++	    );
++	    GDK_COLORMAP_ALLOC_COLOR(colormap, c);
++
++	    c = &d->color[CON_MSG_DLG_COLOR_GRAY];
++	    GDK_COLOR_SET_COEFF(
++		c,
++		0.5f,
++		0.5f,
++		0.5f
++	    );
++	    GDK_COLORMAP_ALLOC_COLOR(colormap, c);
++
++	    c = &d->color[CON_MSG_DLG_COLOR_DARK_GRAY];
++	    GDK_COLOR_SET_COEFF(
++		c,
++		0.25f,
++		0.25f,
++		0.25f
++	    );
++	    GDK_COLORMAP_ALLOC_COLOR(colormap, c);
++
++	    c = &d->color[CON_MSG_DLG_COLOR_RED];
++	    GDK_COLOR_SET_COEFF(
++		c,
++		1.0f,
++		0.0f,
++		0.0f
++	    );
++	    GDK_COLORMAP_ALLOC_COLOR(colormap, c);
++
++	    c = &d->color[CON_MSG_DLG_COLOR_GREEN];
++	    GDK_COLOR_SET_COEFF(
++		c,
++		0.0f,
++		1.0f,
++		0.0f
++	    );
++	    GDK_COLORMAP_ALLOC_COLOR(colormap, c);
++
++	    c = &d->color[CON_MSG_DLG_COLOR_BLUE];
++	    GDK_COLOR_SET_COEFF(
++		c,
++		0.0f,
++		0.0f,
++		1.0f
++	    );
++	    GDK_COLORMAP_ALLOC_COLOR(colormap, c);
++
++	    c = &d->color[CON_MSG_DLG_COLOR_YELLOW];
++	    GDK_COLOR_SET_COEFF(
++		c,
++		1.0f,
++		1.0f,
++		0.0f
++	    );
++	    GDK_COLORMAP_ALLOC_COLOR(colormap, c);
++
++	    c = &d->color[CON_MSG_DLG_COLOR_MAGENTA];
++	    GDK_COLOR_SET_COEFF(
++		c,
++		1.0f,
++		0.0f,
++		1.0f
++	    );
++	    GDK_COLORMAP_ALLOC_COLOR(colormap, c);
++
++	    c = &d->color[CON_MSG_DLG_COLOR_CYAN];
++	    GDK_COLOR_SET_COEFF(
++		c,
++		0.0f,
++		1.0f,
++		1.0f
++	    );
++	    GDK_COLORMAP_ALLOC_COLOR(colormap, c);
++
++	    c = &d->color[CON_MSG_DLG_COLOR_DARK_RED];
++	    GDK_COLOR_SET_COEFF(
++		c,
++		0.5f,
++		0.0f,
++		0.0f
++	    );
++	    GDK_COLORMAP_ALLOC_COLOR(colormap, c);
++
++	    c = &d->color[CON_MSG_DLG_COLOR_DARK_GREEN];
++	    GDK_COLOR_SET_COEFF(
++		c,
++		0.0f,
++		0.5f,
++		0.0f
++	    );
++	    GDK_COLORMAP_ALLOC_COLOR(colormap, c);
++
++	    c = &d->color[CON_MSG_DLG_COLOR_DARK_BLUE];
++	    GDK_COLOR_SET_COEFF(
++		c,
++		0.0f,
++		0.0f,
++		0.5f
++	    );
++	    GDK_COLORMAP_ALLOC_COLOR(colormap, c);
++
++	    c = &d->color[CON_MSG_DLG_COLOR_DARK_YELLOW];
++	    GDK_COLOR_SET_COEFF(
++		c,
++		0.5f,
++		0.5f,
++		0.0f
++	    );
++	    GDK_COLORMAP_ALLOC_COLOR(colormap, c);
++
++	    c = &d->color[CON_MSG_DLG_COLOR_DARK_MAGENTA];
++	    GDK_COLOR_SET_COEFF(
++		c,
++		0.5f,
++		0.0f,
++		0.5f
++	    );
++	    GDK_COLORMAP_ALLOC_COLOR(colormap, c);
++
++	    c = &d->color[CON_MSG_DLG_COLOR_DARK_CYAN];
++	    GDK_COLOR_SET_COEFF(
++		c,
++		0.0f,
++		0.5f,
++		0.5f
++	    );
++	    GDK_COLORMAP_ALLOC_COLOR(colormap, c);
++	}
++
++
++	/* Get the default font (must be a fixed-width font) and
++	 * get its size
++	 */
++	if(STRISEMPTY(font_name))
++	{
++#if defined(PROG_LANGUAGE_POLISH)
++	    const gchar *font_encoding = "iso8859-2";
++#else
++	    const gchar *font_encoding = "iso8859-1";
++#endif
++	    gchar *s;
++
++	    /* Get the base font size */
++	    GdkFont *ref_font = style->font;
++	    gint font_size = GDK_FONT_GET_FONT_NAME_SIZE(ref_font);
++	    if(font_size < 3)
++		font_size = 3;
++
++	    /* Load the fonts */
++
++	    /* Normal */
++	    s = g_strdup_printf(
++"-adobe-courier-medium-r-normal-*-%i-*-*-*-*-*-%s",
++		font_size,
++		font_encoding
++	    );
++	    d->font_normal = gdk_font_load(s);
++	    g_free(s);
++
++	    /* Bold */
++	    s = g_strdup_printf(
++"-adobe-courier-bold-r-normal-*-%i-*-*-*-*-*-%s",
++		font_size,
++		font_encoding
++	    );
++	    d->font_bold = gdk_font_load(s);
++	    g_free(s);
++
++	    /* Underline (use oblique) */
++	    s = g_strdup_printf(
++"-adobe-courier-medium-o-normal-*-%i-*-*-*-*-*-%s",
++		font_size,
++		font_encoding
++	    );
++	    d->font_underline = gdk_font_load(s);
++	    g_free(s);
++
++	    /* Bold underline (use bold oblique) */
++	    s = g_strdup_printf(
++"-adobe-courier-bold-o-normal-*-%i-*-*-*-*-*-%s",
++		font_size,
++		font_encoding
++	    );
++	    d->font_bold_underline = gdk_font_load(s);
++	    g_free(s);
++	}
++	else
++	{
++	    d->font_normal = gdk_font_load(font_name);
++	    d->font_bold = GDK_FONT_REF(d->font_normal);
++	    d->font_underline = GDK_FONT_REF(d->font_normal);
++	    d->font_bold_underline = GDK_FONT_REF(d->font_normal);
++	}
++	if(d->font_normal == NULL)
++	    d->font_normal = gdk_font_load("6x12");
++	if(d->font_bold == NULL)
++	    d->font_bold = gdk_font_load("6x12");
++	if(d->font_underline == NULL)
++	    d->font_underline = gdk_font_load("6x12");
++	if(d->font_bold_underline == NULL)
++	    d->font_bold_underline = gdk_font_load("6x12");
++	if(d->font_normal != NULL)
++	{
++	    GdkFont *font = d->font_normal;
++	    GdkTextBounds b;
++	    gdk_text_bounds(font, "X", 1, &b);
++	    font_width = b.width + 2;
++	    font_height = font->ascent + font->descent;	/* Includes the margin */
++	}
++	else
++	{
++	    font_width = 6 + 2;
++	    font_height = 12 + 2;
++	}
++
++	/* Main GtkVBox */
++	w = gtk_vbox_new(FALSE, 0);
++	gtk_container_add(GTK_CONTAINER(parent), w);
++	gtk_widget_show(w);
++	parent = w;
++
++	/* Text GtkTable */
++	w = gtk_table_new(2, 2, FALSE);
++	gtk_container_border_width(GTK_CONTAINER(w), border_major);
++	gtk_table_set_row_spacing(GTK_TABLE(w), 0, border_minor);
++	gtk_table_set_col_spacing(GTK_TABLE(w), 0, border_minor);
++	gtk_box_pack_start(GTK_BOX(parent), w, FALSE, FALSE, 0);
++	gtk_widget_show(w);
++	parent2 = w;
++	/* Text */
++	d->text = w = gtk_text_new(NULL, NULL);
++	text = GTK_TEXT(w);
++	gtk_widget_set_name(w, CON_MSG_MESSAGES_WIDGET_NAME);
++	gtk_widget_set_usize(
++	    w,
++	    MAX(
++		(font_width * _columns) + (2 * border_major),
++		300
++	    ),
++	    MAX(
++		(font_height * _lines) + (2 * border_major),
++		100
++	    )
++	);
++	gtk_signal_connect(
++	    GTK_OBJECT(w), "button_press_event",
++	    GTK_SIGNAL_FUNC(ConMsgDlgTextEventCB), d
++	);
++	gtk_signal_connect(
++	    GTK_OBJECT(w), "button_release_event",
++	    GTK_SIGNAL_FUNC(ConMsgDlgTextEventCB), d
++	);
++	gtk_text_set_editable(text, FALSE);
++	gtk_text_set_word_wrap(text, TRUE);
++	gtk_table_attach(
++	    GTK_TABLE(parent2), w,
++	    0, 1, 0, 1,
++	    GTK_EXPAND | GTK_SHRINK | GTK_FILL,
++	    GTK_EXPAND | GTK_SHRINK | GTK_FILL,
++	    0, 0
++	);
++	GUIEditableEndowPopupMenu(w, GUI_EDITABLE_POPUP_MENU_READ_ONLY);
++	gtk_widget_show(w);
++	/* Vertical GtkScrollBar */
++	sb = gtk_vscrollbar_new(GTK_TEXT(w)->vadj);
++	gtk_table_attach(   
++	    GTK_TABLE(parent2), sb,
++	    1, 2, 0, 1,
++	    GTK_FILL,
++	    GTK_EXPAND | GTK_SHRINK | GTK_FILL,
++	    0, 0
++	);
++	gtk_widget_show(sb);
++
++
++	/* GtkSeparator */
++	w = gtk_hseparator_new();
++	gtk_box_pack_start(GTK_BOX(parent), w, FALSE, FALSE, 0);
++	gtk_widget_show(w);
++
++
++	/* Buttons GtkHBox */
++	w = gtk_hbox_new(TRUE, 0);
++	gtk_container_border_width(GTK_CONTAINER(w), border_major);
++	gtk_box_pack_start(GTK_BOX(parent), w, FALSE, FALSE, 0);
++	gtk_widget_show(w);
++	parent2 = w;
++
++	/* OK button */
++	d->ok_btn = w = GUIButtonPixmapLabelH(
++	    (guint8 **)icon_ok_20x20_xpm, "OK", NULL
++	);
++	GTK_WIDGET_SET_FLAGS(w, GTK_CAN_DEFAULT);
++	gtk_widget_set_usize(
++	    w,
++	    GUI_BUTTON_HLABEL_WIDTH_DEF, GUI_BUTTON_HLABEL_HEIGHT_DEF
++	);
++	gtk_box_pack_start(GTK_BOX(parent2), w, FALSE, FALSE, 0);
++	gtk_signal_connect(
++	    GTK_OBJECT(w), "clicked",
++	    GTK_SIGNAL_FUNC(ConMsgDlgOKCB), d
++	);
++	gtk_accel_group_add(
++	    accelgrp, GDK_Escape, 0, GTK_ACCEL_VISIBLE,
++	    GTK_OBJECT(w), "clicked"
++	);
++	gtk_accel_group_add(
++	    accelgrp, GDK_o, 0, GTK_ACCEL_VISIBLE,
++	    GTK_OBJECT(w), "clicked"
++	);
++	GUIButtonLabelUnderline(w, GDK_o);
++	gtk_widget_show(w);
++
++	/* No More Messages button */
++	d->no_more_messages_btn = w = GUIButtonPixmapLabelH(
++	    (guint8 **)icon_cancel_20x20_xpm, "No More Messages", NULL
++	);
++	GTK_WIDGET_SET_FLAGS(w, GTK_CAN_DEFAULT);
++	gtk_widget_set_usize(
++	    w,
++	    -1, GUI_BUTTON_HLABEL_HEIGHT_DEF
++	);
++	gtk_box_pack_start(GTK_BOX(parent2), w, FALSE, FALSE, 0);
++	gtk_signal_connect(
++	    GTK_OBJECT(w), "clicked",
++	    GTK_SIGNAL_FUNC(ConMsgDlgNoMoreMessagesCB), d
++	);
++	gtk_accel_group_add(
++	    accelgrp, GDK_n, 0, GTK_ACCEL_VISIBLE,
++	    GTK_OBJECT(w), "clicked"
++	);
++	GUIButtonLabelUnderline(w, GDK_n);
++	gtk_widget_show(w);
++
++	/* Clear button */
++	d->clear_btn = w = GUIButtonPixmapLabelH(
++	    (guint8 **)icon_clear_20x20_xpm, "Clear", NULL
++	);
++	GTK_WIDGET_SET_FLAGS(w, GTK_CAN_DEFAULT);
++	gtk_widget_set_usize(
++	    w,
++	    GUI_BUTTON_HLABEL_WIDTH_DEF, GUI_BUTTON_HLABEL_HEIGHT_DEF
++	);
++	gtk_box_pack_start(GTK_BOX(parent2), w, FALSE, FALSE, 0);
++	gtk_signal_connect(  
++	    GTK_OBJECT(w), "clicked",
++	    GTK_SIGNAL_FUNC(ConMsgDlgClearCB), d
++	);
++	gtk_accel_group_add(
++	    accelgrp, GDK_l, 0, GTK_ACCEL_VISIBLE,
++	    GTK_OBJECT(w), "clicked"
++	);
++	GUIButtonLabelUnderline(w, GDK_l);
++	gtk_widget_show(w);
++
++
++	/* Map the dialog */
++	gtk_widget_show_raise(d->toplevel);
++
++	/* Have the OK button grab focus */
++	gtk_widget_grab_focus(d->ok_btn);
++	gtk_widget_grab_default(d->ok_btn);
++
++	d->freeze_count--;
++
++	return(d);
++}
++
++/*
++ *	Appends the message to the Message Dialog.
++ *
++ *	The msg specifies a null-terminated string describing the
++ *	message. The following characters will be evaluated; escape
++ *	(for ANSI color specification), bell, carrage return, and
++ *	new line.
++ */
++static void ConMsgDlgMsgAppend(
++	ConMsgDlg *d,
++	const gchar *msg
++)
++{
++	const gchar	*s = msg,
++			*s_end;
++	GtkAdjustment *adj;
++	GtkWidget *w;
++	GtkEditable *editable;
++	GtkText *text;
++
++	if((d == NULL) || (s == NULL))
++	    return;
++
++	d->freeze_count++;
++
++	w = d->text;
++	editable = GTK_EDITABLE(w);
++	text = GTK_TEXT(w);
++
++	gtk_text_freeze(text);
++
++	/* Check if there is a carrage return */
++	s_end = (const gchar *)strrchr(
++	    (const char *)s,
++	    CON_MSG_CHAR_RETURN
++	);
++	if(s_end != NULL)
++	{
++	    /* Delete the last line on the GtkText */
++	    const gint len = (gint)gtk_text_get_length(text);
++	    gchar c;
++	    gint i;
++
++	    for(i = len - 1; i >= 0; i--)
++	    {
++		c = (gchar)GTK_TEXT_INDEX(text, i);
++		if(c == CON_MSG_CHAR_NEWLINE)
++		{
++		    i++;
++		    break;
++		}
++	    }
++	    if(i < 0)
++		i = 0;
++	    gtk_editable_delete_text(
++		GTK_EDITABLE(text),
++		i, len
++	    );
++	    gtk_text_set_point(text, (guint)i);
++
++#if 0
++	    gtk_text_thaw(text);
++	    gtk_events_process();
++	    gtk_text_freeze(text);
++#endif
++
++	    /* Reposition the start of the message after the last
++	     * carrage return character so that any characters before
++	     * it do not get appended to the GtkText
++	     */
++	    s = s_end + 1;
++	}
++
++	/* Check if there is an escape character */
++	s_end = ConMsgStringNextEscape(s);
++	if(*s_end != '\0')
++	{
++	    gint len;
++	    GdkColor	*c_fg,
++			*c_bg;
++	    GdkFont *font;
++
++/* Performs the cleanup on the string and then inserts it to the GtkText
++ * using the current font and colors in context */
++#define ADD_TEXT(_s_,_len_)	{		\
++ if((_len_) > 0) {				\
++  gtk_text_insert(				\
++   text,					\
++   font,					\
++   c_fg, c_bg,					\
++   (_s_), (_len_)				\
++  );						\
++ }						\
++}
++
++	    /* Add any text before the first escape character */
++	    len = s_end - s;
++	    font = d->font_normal;
++	    c_fg = NULL;
++	    c_bg = NULL;
++	    ADD_TEXT(s, len);
++
++	    /* Seek to the first escape */
++	    s = s_end;
++
++	    /* Get the first color */
++	    s = ConMsgDlgParseANSIColorString(d, s, &font, &c_fg, &c_bg);
++	    while(*s != '\0')
++	    {
++		s_end = ConMsgStringNextEscape(s);
++		len = s_end - s;
++		ADD_TEXT(s, len);
++
++		s = s_end;
++		s = ConMsgDlgParseANSIColorString(d, s, &font, &c_fg, &c_bg);
++	    }
++
++#undef ADD_TEXT
++	}
++	else
++	{
++	    gtk_text_insert(
++		text,
++		d->font_normal,
++		NULL, NULL,
++		s, -1
++	    );
++	}
++
++#undef SEEK_S_END_TO_NEXT_ESCAPE
++
++	gtk_text_thaw(text);
++
++	adj = text->vadj;
++	if(adj != NULL)
++	    GTK_ADJUSTMENT_SET_VALUE(
++		adj,
++		adj->upper
++	    );
++
++	d->freeze_count--;
++}
++
++/*
++ *	Updates the Message Dialog's widget values.
++ */
++static void ConMsgDlgUpdateWidgets(ConMsgDlg *d)
++{
++	GtkEditable *editable;
++	GtkText *text;
++
++	if(d == NULL)
++	    return;
++
++	editable = GTK_EDITABLE(d->text);
++	text = GTK_TEXT(editable);
++
++}
++
++/*
++ *	Deletes the Message Dialog.
++ */
++static void ConMsgDlgDelete(ConMsgDlg *d)
++{
++	if(d == NULL)
++	    return;
++
++	gtk_widget_hide(d->toplevel);
++
++	d->freeze_count++;
++
++	GTK_WIDGET_DESTROY(d->toplevel);
++	GTK_ACCEL_GROUP_UNREF(d->accelgrp);
++
++	(void)GDK_FONT_UNREF(d->font_normal);
++	(void)GDK_FONT_UNREF(d->font_bold);
++	(void)GDK_FONT_UNREF(d->font_underline);
++	(void)GDK_FONT_UNREF(d->font_bold_underline);
++
++	if(d->colormap != NULL)
++	{
++	    gint i;
++	    GdkColormap *colormap = d->colormap;
++
++	    for(i = 0; i < CON_MSG_DLG_NCOLORS; i++)
++		GDK_COLORMAP_FREE_COLOR(colormap, &d->color[i]);
++
++	    (void)GDK_COLORMAP_UNREF(colormap);
++	}
++
++	d->freeze_count--;
++
++	g_free(d);
++}
++
++
++/*
++ *	Checks the message buffer descriptor for data and processes it.
++ *
++ *	The fd specifies the message buffer read descriptor.
++ *
++ *	The d_ptr specifies the pointer to the Message Dialog pointer.
++ *	If d_ptr is not NULL then the Message Dialog will be
++ *	created as needed and the message will be appended to it. If
++ *	d_ptr is NULL then the message is ignored.
++ *
++ *	Returns TRUE if data was processed (regardless of if d_ptr
++ *	was NULL or not).
++ */
++static gboolean ConMsgProcessDescriptor(
++	ConMsgCore *core,
++	const gint fd,
++	ConMsgDlg **d_ptr,
++	const gchar *toplevel_widget_name,
++	const gchar *title,
++	guint8 **icon_data
++)
++{
++	struct stat stat_buf;
++        fd_set fd_set;
++        struct timeval tv;
++	gint		i,
++			buf_len,
++			bytes_read,
++			total_bytes_read;
++	gchar		*buf,
++			*msg;
++
++	/* Do not read from this descriptor? */
++	if(fd < 0)
++	    return(FALSE);
++
++	/* No data waiting to be read? */
++	FD_ZERO(&fd_set);
++	FD_SET((int)fd, &fd_set);
++        tv.tv_sec = 0;
++        tv.tv_usec = 0;
++        if(select(
++	    (int)fd + 1,			/* Highest number descriptor + 1 */
++	    &fd_set,				/* Read descriptor set */
++	    NULL,				/* No write descriptor set */
++	    NULL,				/* No exception descriptor set */
++            &tv
++	) <= 0)
++	    return(FALSE);
++
++	core->freeze_count++;
++
++	/* Check if the specified descriptor is valid and get its
++	 * statistics
++	 */
++	if(fstat((int)fd, &stat_buf))
++	{
++	    core->freeze_count--;
++	    return(FALSE);
++	}
++
++	/* Get block size for optimul reading and allocate the read
++	 * buffer
++	 */
++#if defined(_WIN32)
++	buf_len = 1024;
++#else
++	buf_len = (gint)stat_buf.st_blksize;
++#endif
++	if(buf_len <= 0)
++	    buf_len = 1024;
++	buf = (gchar *)g_malloc(buf_len * sizeof(gchar));
++	if(buf == NULL)
++	{
++	    core->freeze_count--;
++	    return(FALSE);
++	}
++
++	/* Begin reading from the descriptor and append all the data
++	 * to the message string
++	 */
++	msg = NULL;
++	total_bytes_read = 0;
++	while(TRUE)
++	{
++	    /* Read a block of data from the descriptor */
++	    bytes_read = (gint)read(
++		(int)fd,
++		buf,
++		(size_t)buf_len
++	    );
++	    if(bytes_read <= 0)
++		break;
++
++	    /* Get the current index in the message string */
++	    i = total_bytes_read;
++
++	    /* Count the number of bytes read */
++	    total_bytes_read += bytes_read;
++
++	    /* Append the data to the message string */
++	    msg = (gchar *)g_realloc(
++		msg,
++		(total_bytes_read + 1) * sizeof(gchar)
++	    );
++	    if(msg != NULL)
++	    {
++		(void)memcpy(
++		    msg + i,
++		    buf,
++		    (size_t)bytes_read
++		);
++		msg[total_bytes_read] = '\0';
++	    }
++	}
++
++	/* Delete the read buffer */
++	g_free(buf);
++
++	/* Was any data read? */
++	if(msg != NULL)
++	{
++	    /* Was a pointer to a Message Dialog pointer specified? */
++	    if(d_ptr != NULL)
++	    {
++		/* Create a new Message Dialog as needed */
++		ConMsgDlg *d = *d_ptr;
++		if(d == NULL)
++		    *d_ptr = d = ConMsgDlgNew(
++			core,
++			toplevel_widget_name,
++			title,
++			icon_data,
++			core->font_name,
++			core->terminal_columns,
++			core->terminal_lines
++		    );
++
++		if(d != NULL)
++		{
++		    /* Append the message to the Message Dialog */
++		    ConMsgDlgMsgAppend(
++			d,
++			msg
++		    );
++		}
++	    }
++	}
++
++	/* Map and raise the Message Dialog if there was any data read */
++	if((msg != NULL) && (d_ptr != NULL))
++	{
++	    ConMsgDlg *d = *d_ptr;
++	    if(d != NULL)
++		gtk_widget_show_raise(d->toplevel);
++	}
++
++	/* Delete the message string */
++	g_free(msg);
++
++	core->freeze_count--;
++
++	/* Return TRUE if there was data read */
++	return((total_bytes_read > 0) ? TRUE : FALSE);
++}
++
++/*
++ *	Console message monitor timeout callback.
++ */
++static gint ConMsgMessageDescriptorCheckTimeoutCB(gpointer data)
++{
++	ConMsgCore *core = CON_MSG_CORE(data);
++	if(core == NULL)
++	    return(FALSE);
++
++	if(core->freeze_count > 0)
++	    return(TRUE);
++
++	core->freeze_count++;
++
++	/* Check for data on stdout and stderr, if there is data then
++	 * read it and display it on the Message Dialogs
++	 */
++	(void)ConMsgProcessDescriptor(
++	    core,
++	    core->stdout_fd_r,
++	    (core->flags & CON_MSG_CORE_SHOW_STDOUT) ? &core->stdout_dialog : NULL,
++	    CON_MSG_STDOUT_TOPLEVEL_WIDGET_NAME,
++	    core->stdout_dialog_title,
++	    (guint8 **)icon_info_32x32_xpm
++	);
++	(void)ConMsgProcessDescriptor(
++	    core,
++	    core->stderr_fd_r,
++	    (core->flags & CON_MSG_CORE_SHOW_STDERR) ? &core->stderr_dialog : NULL,
++	    CON_MSG_STDERR_TOPLEVEL_WIDGET_NAME,
++	    core->stderr_dialog_title,
++	    (guint8 **)icon_warning_32x32_xpm
++	);
++
++	core->freeze_count--;
++
++	return(TRUE);
++}
++
++/*
++ *	Initializes the message descriptors by closing the global
++ *	stdout and stderr descriptors and making them a copy of the
++ &	core's message descriptors.
++ *
++ *	If a message desctiptor was already initialized (not -1) or its
++ *	show option was not set then nothing will be done for that
++ *	descriptor.
++ */
++static void ConMsgMessageDescriptorsInitialize(ConMsgCore *core)
++{
++	/* Initialize the stdout descriptor as needed */
++	if((core->flags & CON_MSG_CORE_SHOW_STDOUT) &&
++	   (core->stdout_fd_r < 0)
++	)
++	{
++	    gint fd_pair[2];
++
++	    /* Create a new piped pair of file descriptors for
++	     * redirecting standard output
++	     */
++	    if(pipe((int *)fd_pair))
++		return;
++
++	    /* Close the previous standard output stream and make it a
++	     * copy of our new write descriptor
++	     */
++	    if(dup2(
++		(int)fd_pair[1],
++		fileno(stdout)
++	    ) < 0)
++		return;
++
++	    /* Set line buffering on the new stdout stream */
++	    (void)setlinebuf(stdout);
++
++	    /* Close our new write descriptor since it has been coppied */
++	    (void)CLOSE(fd_pair[1]);
++
++	    /* Set our new read desriptor to non blocking */
++	    (void)fcntl(
++		(int)fd_pair[0],
++		F_SETFL,
++		O_NONBLOCK
++	    );
++
++	    /* Record our new standard output read descriptor */
++	    core->stdout_fd_r = fd_pair[0];
++	}
++
++	/* Initialize the stderr descriptor as needed */
++	if((core->flags & CON_MSG_CORE_SHOW_STDERR) &&
++	   (core->stderr_fd_r < 0)
++	)
++	{
++	    gint fd_pair[2];
++
++	    /* Create a new piped pair of file descriptors for
++	     * redirecting standard error
++	     */
++	    if(pipe((int *)fd_pair))
++		return;
++
++	    /* Close the previous standard error stream and make it a
++	     * copy of our new write descriptor
++	     */
++	    if(dup2(
++		(int)fd_pair[1],
++		fileno(stderr)
++	    ) < 0)
++		return;
++
++	    /* Set no buffering on the new stderr stream */
++	    (void)setvbuf(
++		stderr,
++		NULL,
++		_IONBF,
++		0
++	    );
++
++	    /* Close our new write descriptor since it has been coppied */
++	    (void)CLOSE(fd_pair[1]);
++
++	    /* Set our new read desriptor to non blocking */
++	    (void)fcntl(
++		(int)fd_pair[0],
++		F_SETFL,
++		O_NONBLOCK
++	    );
++
++	    /* Record our new standard error read descriptor */
++	    core->stderr_fd_r = fd_pair[0];
++	}
++}
++
++
++/*
++ *	Initializes the Console Message Display System.
++ *
++ *	The name specifies the program's name.
++ *
++ *	The columns and lines specifies the number of columns and lines
++ *	(respectively), either value can be 0 to indicate to use the
++ *	value specified by the environment variables COLUMNS and
++ *	LINES (respectively).
++ *
++ *	The show_stdout specifies to initially enable the stdout
++ *	dialog or not.
++ *
++ *	The show_stderr specifies to initially enable the stderr
++ *	dialog or not.
++ */
++gint ConMsgInit(
++	const gchar *name,
++	const gchar *font_name,
++	const gint columns,
++	const gint lines,
++	const gboolean show_stdout,
++	const gboolean show_stderr
++)
++{
++	ConMsgCore *core;
++
++	/* Already initialized? */
++	if(con_msg_core != NULL)
++	    return(0);
++
++	/* Create a new Console Message Core */
++	con_msg_core = core = CON_MSG_CORE(g_malloc0(sizeof(ConMsgCore)));
++	if(core == NULL)
++	    return(-3);
++
++	core->freeze_count++;
++
++	core->prog_name = STRDUP(name);
++	core->font_name = STRDUP(font_name);
++
++	/* Set the dialog titles */
++	if(STRISEMPTY(core->prog_name))
++	    core->stdout_dialog_title = g_strdup(CON_MSG_DLG_STDOUT_TITLE_POSTFIX);
++	else
++	    core->stdout_dialog_title = g_strconcat(
++		core->prog_name,
++		" - ",
++		CON_MSG_DLG_STDOUT_TITLE_POSTFIX,
++		NULL
++	    );
++
++	if(STRISEMPTY(core->prog_name))
++	    core->stderr_dialog_title = g_strdup(CON_MSG_DLG_STDERR_TITLE_POSTFIX);
++	else
++	    core->stderr_dialog_title = g_strconcat(
++		core->prog_name,
++		" - ",
++		CON_MSG_DLG_STDERR_TITLE_POSTFIX,
++		NULL
++	    );
++
++	/* Set the terminal geometry */
++	if(columns > 0)
++	{
++	    core->terminal_columns = columns;
++	}
++	else
++	{
++	    const gchar *s = g_getenv("COLUMNS");
++	    if(s != NULL)
++		core->terminal_columns = ATOI(s);
++	}
++	if(lines > 0)
++	{
++	    core->terminal_lines = lines;
++	}
++	else
++	{
++	    const gchar *s = g_getenv("LINES");
++	    if(s != NULL)
++		core->terminal_lines = ATOI(s);
++	}
++
++	/* Set the show stdout & stderr options */
++	if(show_stdout)
++	    core->flags |= CON_MSG_CORE_SHOW_STDOUT;
++	else
++	    core->flags &= ~CON_MSG_CORE_SHOW_STDOUT;
++
++	if(show_stderr)
++	    core->flags |= CON_MSG_CORE_SHOW_STDERR;
++	else
++	    core->flags &= ~CON_MSG_CORE_SHOW_STDERR;
++
++	/* Reset the Message Dialogs references, each Message Dialog
++	 * will be created as needed later when a message comes and
++	 * needs to be displayed
++	 */
++	core->stdout_dialog = NULL;
++	core->stderr_dialog = NULL;
++
++	/* Redirect the standard output and standard error streams
++	 * for the first time
++	 */
++	core->stdout_fd_r = -1;
++	core->stderr_fd_r = -1;
++	ConMsgMessageDescriptorsInitialize(core);
++
++	/* Set the message descriptors check timeout callback */
++	core->msg_check_toid = gtk_timeout_add(
++	    CON_MSG_MESSAGE_CHECK_INT,
++	    ConMsgMessageDescriptorCheckTimeoutCB, core
++	);
++
++	core->freeze_count--;
++
++	return(0);
++}
++
++/*
++ *	Resets the Console Message Display System.
++ *
++ *	Note that ConMsgInit() must be called once prior to this call
++ *	to properly initialize the Console Message Display System.
++ *
++ *	The name specifies the program's name.
++ *
++ *	The columns and lines specifies the number of columns and lines
++ *	(respectively), either value can be 0 to indicate to use the
++ *	value specified by the environment variables COLUMNS and
++ *	LINES (respectively).
++ *
++ *	The show_stdout specifies to initially enable the stdout
++ *	dialog or not.
++ *
++ *	The show_stderr specifies to initially enable the stderr
++ *	dialog or not.
++ */
++gint ConMsgReset(
++	const gchar *name,
++	const gchar *font_name,
++	const gint columns,
++	const gint lines,
++	const gboolean show_stdout,
++	const gboolean show_stderr
++)
++{
++	ConMsgCore *core = con_msg_core;
++	if(core == NULL)
++	    return(-1);
++
++	core->freeze_count++;
++
++	/* Set the program name */
++	g_free(core->prog_name);
++	core->prog_name = STRDUP(name);
++
++	/* Set the font name */
++	g_free(core->font_name);
++	core->font_name = STRDUP(font_name);
++
++	/* Set the dialog titles */
++	g_free(core->stdout_dialog_title);
++	if(STRISEMPTY(core->prog_name))
++	    core->stdout_dialog_title = g_strdup(CON_MSG_DLG_STDOUT_TITLE_POSTFIX);
++	else
++	    core->stdout_dialog_title = g_strconcat(
++		core->prog_name,
++		" - ",
++		CON_MSG_DLG_STDOUT_TITLE_POSTFIX,
++		NULL
++	    );
++	g_free(core->stderr_dialog_title);
++	if(STRISEMPTY(core->prog_name))
++	    core->stderr_dialog_title = g_strdup(CON_MSG_DLG_STDERR_TITLE_POSTFIX);
++	else
++	    core->stderr_dialog_title = g_strconcat(
++		core->prog_name,
++		" - ",
++		CON_MSG_DLG_STDERR_TITLE_POSTFIX,
++		NULL
++	    );
++
++	/* Set the terminal geometry */
++	if(columns > 0)
++	{
++	    core->terminal_columns = columns;
++	}
++	else
++	{   
++	    const gchar *s = g_getenv("COLUMNS");
++	    if(s != NULL)
++		core->terminal_columns = ATOI(s);
++	}
++	if(lines > 0)
++	{
++	    core->terminal_lines = lines;
++	}
++	else
++	{   
++	    const gchar *s = g_getenv("LINES");
++	    if(s != NULL)
++		core->terminal_lines = ATOI(s);
++	}
++
++	/* Set the show stdout & stderr options */
++	if(show_stdout)
++	    core->flags |= CON_MSG_CORE_SHOW_STDOUT;
++	else
++	    core->flags &= ~CON_MSG_CORE_SHOW_STDOUT;
++
++	if(show_stderr)
++	    core->flags |= CON_MSG_CORE_SHOW_STDERR;
++	else
++	    core->flags &= ~CON_MSG_CORE_SHOW_STDERR;
++
++	/* Delete the Message Dialogs so that they are created next
++	 * time with the reset values
++	 */
++	ConMsgDlgDelete(core->stdout_dialog);
++	core->stdout_dialog = NULL;
++	ConMsgDlgDelete(core->stderr_dialog);
++	core->stderr_dialog = NULL;
++
++	/* Initialize the message descriptors as needed in case the
++	 * show stdout or show stderr options was set
++	 */
++	ConMsgMessageDescriptorsInitialize(core);
++
++	/* Reset the message descriptors check timeout callback */
++	(void)GTK_TIMEOUT_REMOVE(core->msg_check_toid);
++	core->msg_check_toid = gtk_timeout_add(
++	    CON_MSG_MESSAGE_CHECK_INT,
++	    ConMsgMessageDescriptorCheckTimeoutCB, core
++	);
++
++	core->freeze_count--;
++
++	return(0);
++}
++
++/*
++ *	Gets the current set program name.
++ */
++const gchar *ConMsgGetName(void)
++{
++	ConMsgCore *core = con_msg_core;
++	if(core == NULL)
++	    return(NULL);
++
++	return(core->prog_name);
++}
++
++/*
++ *	Gets the current set font name.
++ */
++const gchar *ConMsgGetFontName(void)
++{
++	ConMsgCore *core = con_msg_core;
++	if(core == NULL)
++	    return(NULL);
++
++	return(core->font_name);
++}
++
++/*
++ *	Gets the current set columns.
++ */
++gint ConMsgGetColumns(void)
++{
++	ConMsgCore *core = con_msg_core;
++	if(core == NULL)
++	    return(0);
++
++	return(core->terminal_columns);
++}
++
++/*
++ *	Gets the current set lines.
++ */
++gint ConMsgGetLines(void)
++{
++	ConMsgCore *core = con_msg_core;
++	if(core == NULL)
++	    return(0);
++
++	return(core->terminal_lines);
++}
++
++/*
++ *	Gets the current show stdout setting.
++ */
++gboolean ConMsgGetShowStdOut(void)
++{
++	ConMsgCore *core = con_msg_core;
++	if(core == NULL)
++	    return(FALSE);
++
++	return((core->flags & CON_MSG_CORE_SHOW_STDOUT) ? TRUE : FALSE);
++}
++
++/*
++ *	Gets the current show stdout setting.
++ */
++gboolean ConMsgGetShowStdErr(void)
++{
++	ConMsgCore *core = con_msg_core;
++	if(core == NULL)
++	    return(FALSE);
++
++	return((core->flags & CON_MSG_CORE_SHOW_STDERR) ? TRUE : FALSE);
++}
++
++/*
++ *	Shuts down the Console Message Display System.
++ */
++void ConMsgShutdown(void)
++{
++	ConMsgCore *core = con_msg_core;
++	if(core == NULL)
++	    return;
++
++	con_msg_core = NULL;
++
++	core->freeze_count++;
++
++	/* Wait for all the Message Dialogs to be unmapped, process
++	 * events until the user unmaps all the Message Dialogs
++	 */
++	gtk_events_process();
++	while((core->stdout_dialog != NULL) || (core->stderr_dialog != NULL))
++	    gtk_events_process();
++
++	/* Remove the console message check timeout callback */
++	core->msg_check_toid = GTK_TIMEOUT_REMOVE(core->msg_check_toid);
++
++	/* Delete the Message Dialogs */
++	ConMsgDlgDelete(core->stdout_dialog);
++	core->stdout_dialog = NULL;
++	ConMsgDlgDelete(core->stderr_dialog);
++	core->stderr_dialog = NULL;
++
++	/* Close our read ends of standard output and standard error */
++	(void)CLOSE(core->stdout_fd_r);
++	(void)CLOSE(core->stderr_fd_r);
++
++	g_free(core->prog_name);
++	g_free(core->font_name);
++	g_free(core->stdout_dialog_title);
++	g_free(core->stderr_dialog_title);
++
++	core->freeze_count--;
++
++	g_free(core);
++}
++
++
++/*
++ *	Appends the message to the StdOut Message Dialog.
++ */
++void ConMsgStdOutDlgSendMessage(const gchar *msg)
++{
++	ConMsgDlg *d;
++	ConMsgCore *core = con_msg_core;
++	if((core == NULL) || STRISEMPTY(msg))
++	    return;
++
++	core->freeze_count++;
++
++	/* Get/create the StdOut Message Dialog */
++	d = core->stdout_dialog;
++	if(d == NULL)
++	    core->stdout_dialog = d = ConMsgDlgNew(
++		core,
++		CON_MSG_STDOUT_TOPLEVEL_WIDGET_NAME,
++		core->stdout_dialog_title,
++		(guint8 **)icon_info_32x32_xpm,
++		core->font_name,
++		core->terminal_columns,
++		core->terminal_lines
++	    );
++	if(d == NULL)
++	{
++	    core->freeze_count--;
++	    return;
++	}
++
++	/* Append the message to the Message Dialog */
++	ConMsgDlgMsgAppend(
++	    d,
++	    msg
++	);
++
++	core->freeze_count--;
++}
++
++/*
++ *	Appends the message to the StdErr Message Dialog.
++ */
++void ConMsgStdErrDlgSendMessage(const gchar *msg)
++{
++	ConMsgDlg *d;
++	ConMsgCore *core = con_msg_core;
++	if((core == NULL) || STRISEMPTY(msg))
++	    return;
++
++	core->freeze_count++;
++
++	/* Get/create the StdErr Message Dialog */
++	d = core->stderr_dialog;
++	if(d == NULL)          
++	    core->stderr_dialog = d = ConMsgDlgNew(
++		core,
++		CON_MSG_STDERR_TOPLEVEL_WIDGET_NAME,
++		core->stderr_dialog_title,
++		(guint8 **)icon_warning_32x32_xpm,
++		core->font_name,
++		core->terminal_columns,
++		core->terminal_lines
++	    );
++	if(d == NULL)
++	{
++	    core->freeze_count--;
++	    return;
++	}
++
++	/* Append the message to the Message Dialog */
++	ConMsgDlgMsgAppend(
++	    d,
++	    msg
++	);
++
++	core->freeze_count--;
++}
++
++/*
++ *	Maps the StdOut Message Dialog.
++ */
++void ConMsgStdOutDlgMap(void)
++{
++	ConMsgDlg *d;
++	ConMsgCore *core = con_msg_core;
++	if(core == NULL)
++	    return;
++
++	core->freeze_count++;
++
++	/* Get/create the StdOut Message Dialog */
++	d = core->stdout_dialog;
++	if(d == NULL)
++	    core->stdout_dialog = d = ConMsgDlgNew(
++		core,
++		CON_MSG_STDOUT_TOPLEVEL_WIDGET_NAME,
++		core->stdout_dialog_title,
++		(guint8 **)icon_info_32x32_xpm,
++		core->font_name,
++		core->terminal_columns,
++		core->terminal_lines
++	    );
++	if(d == NULL)
++	{
++	    core->freeze_count--;
++	    return;
++	}
++
++	gtk_widget_show_raise(d->toplevel);
++
++	/* Have the OK button grab focus */
++	gtk_widget_grab_focus(d->ok_btn);
++	gtk_widget_grab_default(d->ok_btn);
++
++	core->freeze_count--;
++}
++
++/*
++ *	Maps the StdErr Message Dialog.
++ */
++void ConMsgStdErrDlgMap(void)
++{
++	ConMsgDlg *d;
++	ConMsgCore *core = con_msg_core;
++	if(core == NULL)
++	    return;
++
++	core->freeze_count++;
++
++	/* Get/create the StdErr Message Dialog */
++	d = core->stderr_dialog;
++	if(d == NULL)          
++	    core->stderr_dialog = d = ConMsgDlgNew(
++		core,
++		CON_MSG_STDERR_TOPLEVEL_WIDGET_NAME,
++		core->stderr_dialog_title,
++		(guint8 **)icon_warning_32x32_xpm,
++		core->font_name,
++		core->terminal_columns,
++		core->terminal_lines
++	    );
++	if(d == NULL)
++	{
++	    core->freeze_count--;
++	    return;
++	}
++
++	gtk_widget_show_raise(d->toplevel);
++
++	/* Have the OK button grab focus */
++	gtk_widget_grab_focus(d->ok_btn);
++	gtk_widget_grab_default(d->ok_btn);
++
++	core->freeze_count--;
++}
+diff -Naur endeavour-3.1.2/endeavour2/platforms.ini endeavour-3.1.2-fix-lib64-build/endeavour2/platforms.ini
+--- endeavour-3.1.2/endeavour2/platforms.ini	2009-03-04 07:00:00.000000000 +0100
++++ endeavour-3.1.2-fix-lib64-build/endeavour2/platforms.ini	2009-03-13 10:43:26.000000000 +0100
+@@ -573,6 +573,212 @@
+ 			MustExist = Yes
+ 			DependPath = gtk-config
+ 
++Platform = Linux64
++	Description = For most any Linux system
++	PREFIX = /usr
++	CFLAGS = -Wall -O2 -DNEED_STRCASESTR
++	LIBS = -lendeavour2-base -lm
++	LIB_DIR = -L./libendeavour2-base
++	CC = cc
++	CPP = c++
++	PlatformSearchPathInclude = /usr/include
++	PlatformSearchPathInclude = /usr/X11R6/include
++	PlatformSearchPathInclude = /usr/local/include
++	PlatformSearchPathInclude = /opt/gnome/include
++	PlatformSearchPathLib = /lib64
++	PlatformSearchPathLib = /usr/lib64
++	PlatformSearchPathLib = /usr/X11R6/lib
++	PlatformSearchPathLib = /usr/local/lib
++	PlatformSearchPathLib = /opt/gnome/lib
++	PlatformSearchPathEtc = /etc
++	PlatformSearchPathEtc = /usr/etc
++	PlatformSearchPathEtc = /usr/local/etc
++	PlatformSearchPathBin = /bin
++	PlatformSearchPathBin = /usr/bin
++	PlatformSearchPathBin = /usr/X11R6/bin
++	PlatformSearchPathBin = /usr/local/bin
++	PlatformSearchPathBin = /usr/games
++	PlatformSearchPathBin = /opt/gnome/bin
++	PlatformSearchPathData = /usr/share/icons
++	PlatformSearchPathData = /usr/share/games
++	PlatformFeature = debug
++		Description = Just adds -g to the CFLAGS for debugging
++		MustExist = No
++		FeatureCFLAGS = -g
++	PlatformFeature = arch-i486
++		Description = Adds -march=i486 for 486 specific optimizations
++		MustExist = Preferred  
++		FeatureCFLAGS = -march=i486
++		FeatureDepend = i486
++			DependType = Machine
++			MustExist = Yes
++			DependMachine = i486
++	PlatformFeature = arch-i586
++		Description = Adds -march=i586 for Pentium specific optimizations
++		MustExist = Preferred
++		FeatureCFLAGS = -march=i586
++		FeatureDepend = i586
++			DependType = Machine
++			MustExist = Yes
++			DependMachine = i586
++	PlatformFeature = arch-i686
++		Description = Adds -march=i686 for Pentium Pro specific optimizations
++		MustExist = Preferred
++		FeatureCFLAGS = -march=i686
++		FeatureDepend = i686
++			DependType = Machine
++			MustExist = Yes
++			DependMachine = i686
++	PlatformFeature = arch-pentiumpro
++		Description = Adds -march=pentiumpro for Pentium Pro specific optimizations
++		MustExist = Preferred
++		FeatureCFLAGS = -march=pentiumpro
++		FeatureDepend = pentiumpro
++			DependType = Machine
++			MustExist = Yes
++			DependMachine = pentiumpro
++        PlatformFeature = libz
++                Description = GNU Z Compression/Decompression Library
++                MustExist = Preffered
++                FeatureCFLAGS = -DHAVE_LIBZ
++                FeatureLIBS = -lz
++                FeatureDepend = libz-devel
++                        DependType = Header
++                        MustExist = Yes
++                        DependPath = zlib.h
++                        DependGrepString = gzopen
++        PlatformFeature = libbz2
++                Description = BZip2 Block-Sorting Compression/Decompression Library
++                MustExist = Preffered
++                FeatureCFLAGS = -DHAVE_LIBBZ2
++                FeatureLIBS = -lbz2
++                FeatureDepend = libbz2-devel
++                        DependType = Header
++                        MustExist = Yes
++                        DependPath = bzlib.h
++                        DependGrepString = BZ2_bzopen
++        PlatformFeature = libtar
++                Description = Tape Archive Library
++                MustExist = Preffered
++                FeatureCFLAGS = -DHAVE_LIBTAR
++                FeatureLIBS = -ltar
++                FeatureDepend = libtar-devel
++                        DependType = Header
++                        MustExist = Yes
++                        DependPath = libtar.h
++                        DependGrepString = tar_open
++        PlatformFeature = libxar
++                Description = X Archive Library
++                MustExist = Preffered
++                FeatureCFLAGS = -DHAVE_LIBXAR
++                FeatureLIBS = -lxar
++                FeatureDepend = libxar-devel
++                        DependType = Header
++                        MustExist = Yes
++                        DependPath = xar/xar.h
++                        DependGrepString = xar_open
++        PlatformFeature = libzip
++                Description = PKZip Library
++                MustExist = Preffered
++                FeatureCFLAGS = -DHAVE_LIBZIP
++                FeatureLIBS = -lzip
++                FeatureDepend = libzip-devel
++                        DependType = Header
++                        MustExist = Yes
++                        DependPath = zip.h
++                        DependGrepString = zip_open
++        PlatformFeature = libgif
++                Description = Uncompressed GIF Library
++                MustExist = Preffered
++                FeatureCFLAGS = -DHAVE_LIBGIF
++                FeatureLIBS = -lgif
++                FeatureDepend = libgif-devel
++                        DependType = Header
++                        MustExist = Yes
++                        DependPath = gif_lib.h
++                        DependGrepString = DGifOpenFileName
++	PlatformFeature = libjpeg
++		Description = JPEG Library
++		MustExist = Preffered
++		FeatureCFLAGS = -DHAVE_LIBJPEG
++		FeatureLIBS = -ljpeg
++		FeatureDepend = libjpeg-devel
++			DependType = Header
++			MustExist = Yes
++			DependPath = jpeglib.h
++			DependGrepString = jpeg_create_decompress
++	PlatformFeature = libpng
++		Description = PNG Library
++		MustExist = Preffered
++		FeatureCFLAGS = -DHAVE_LIBPNG `libpng-config --cflags`
++		FeatureLIBS = `libpng-config --libs`
++		FeatureDepend = libpng-devel
++			DependType = Header
++			MustExist = Yes
++			DependPath = png.h
++			DependGrepString = png_create_read_struct
++	PlatformFeature = libmng
++		Description = MNG Library
++		MustExist = Preffered
++		FeatureCFLAGS = -DHAVE_LIBMNG
++		FeatureLIBS = -lmng -lz
++		FeatureDepend = zlib-devel
++			DependType = Header
++			MustExist = Yes
++			DependPath = zlib.h
++			DependGrepString = deflateInit
++		FeatureDepend = libmng-devel
++			DependType = Header
++			MustExist = Yes
++			DependPath = libmng.h
++			DependGrepString = mng_initialize
++	PlatformFeature = libxpm
++		Description = XPM Library
++		MustExist = Preffered
++		FeatureCFLAGS = -DHAVE_LIBXPM
++		FeatureLIBS = -lXpm
++		FeatureLIB_DIR = -L/usr/X11R6/lib/
++		FeatureDepend = libxpm-devel
++			DependType = Header
++			MustExist = Yes
++			DependPath = X11/xpm.h
++			DependGrepString = XpmReadFileToXpmImage
++	PlatformFeature = Imlib
++		Description = Image library
++		MustExist = Preffered
++		FeatureCFLAGS = `imlib-config --cflags` -DHAVE_IMLIB
++		FeatureLIBS = `imlib-config --libs`
++		FeatureDepend = Imlib-devel
++			DependType = Program
++			MustExist = Yes
++			DependPath = imlib-config
++        PlatformFeature = XF86VidMode
++                Description = XF86 Video Mode extension
++                MustExist = Preferred                  
++                FeatureCFLAGS = -DHAVE_XF86_VIDMODE
++                FeatureLIBS = -lXxf86vm
++                FeatureLIB_DIR = -L/usr/X11R6/lib/
++                FeatureDepend = xf86vidmode-lib
++                        DependType = Library
++                        MustExist = Yes
++                        DependPath = libXxf86vm.a
++                        DependGrepString = XF86VidModeQueryExtension
++                FeatureDepend = xf86vidmode-devel
++                        DependType = Header
++                        MustExist = Yes
++                        DependPath = X11/extensions/xf86vmode.h
++                        DependGrepString = XF86VidModeQueryExtension
++	PlatformFeature = libgtk
++		Description = GTK+ 1.2.x
++		MustExist = Yes
++		FeatureCFLAGS = `gtk-config --cflags`
++		FeatureLIBS = `gtk-config --libs`
++		FeatureLIB_DIR = -L/usr/X11R6/lib
++		FeatureDepend = gtk-devel
++			DependType = Program
++			MustExist = Yes
++			DependPath = gtk-config
++
+ 
+ # Debian GNU/Linux
+ #
+diff -Naur endeavour-3.1.2/endeavour2/platforms.ini~ endeavour-3.1.2-fix-lib64-build/endeavour2/platforms.ini~
+--- endeavour-3.1.2/endeavour2/platforms.ini~	1970-01-01 01:00:00.000000000 +0100
++++ endeavour-3.1.2-fix-lib64-build/endeavour2/platforms.ini~	2009-03-13 10:40:49.000000000 +0100
+@@ -0,0 +1,1127 @@
++# pconf - Platform Configurator - Platforms Configuration
++#
++# See FORMAT for specifications about this file.
++#
++
++MakefileOutput = endeavour2/Makefile.pconf
++MakefileInputPrepend = endeavour2/Makefile.pconf.prepend
++MakefileInputAppend = endeavour2/Makefile.pconf.append
++ThisPlatformInfo = endeavour2/pconf_platform_info.ini
++
++MessageConfigStartup = Checking this platform...
++MessagePlatformUnsupported = Sorry, that platform is not supported, \
++please try a different or generic platform if available. Use --listall \
++to obtain a complete list of supported platforms.
++MessageDependFailed = One or more compoents are not available on your \
++system, please install them first and then resume this configuration.
++MessageSuccess = Type 'gmake all' or 'make all' to compile the program.
++
++#
++# Platforms section:
++#
++
++# UNIX
++#
++Platform = UNIX
++	Description = For most UNIX systems
++	PREFIX = /usr
++	CFLAGS = -Wall -O2 -DNEED_STRCASESTR
++	LIBS = -lendeavour2-base -lm
++	LIB_DIR = -L./libendeavour2-base
++	CC = cc
++	CPP = c++
++	PlatformSearchPathInclude = /usr/include
++	PlatformSearchPathInclude = /usr/X11R6/include
++	PlatformSearchPathLib = /lib
++	PlatformSearchPathLib = /usr/lib
++	PlatformSearchPathLib = /usr/X11R6/lib
++	PlatformSearchPathEtc = /etc
++	PlatformSearchPathEtc = /usr/etc
++	PlatformSearchPathBin = /bin
++	PlatformSearchPathBin = /usr/bin
++	PlatformSearchPathBin = /usr/X11R6/bin
++	PlatformSearchPathData = /usr/share/icons
++	PlatformFeature = debug
++		Description = Just adds -g to the CFLAGS for debugging
++		MustExist = No
++		FeatureCFLAGS = -g
++        PlatformFeature = libz
++                Description = GNU Z Compression/Decompression Library
++                MustExist = Preffered
++                FeatureCFLAGS = -DHAVE_LIBZ
++                FeatureLIBS = -lz
++                FeatureDepend = libz-devel
++                        DependType = Header
++                        MustExist = Yes
++                        DependPath = zlib.h
++                        DependGrepString = gzopen
++        PlatformFeature = libbz2
++                Description = BZip2 Block-Sorting Compression/Decompression Library
++                MustExist = Preffered
++                FeatureCFLAGS = -DHAVE_LIBBZ2
++                FeatureLIBS = -lbz2
++                FeatureDepend = libbz2-devel
++                        DependType = Header
++                        MustExist = Yes
++                        DependPath = bzlib.h
++                        DependGrepString = BZ2_bzopen
++        PlatformFeature = libtar
++                Description = Tape Archive Library
++                MustExist = Preffered
++                FeatureCFLAGS = -DHAVE_LIBTAR
++                FeatureLIBS = -ltar
++                FeatureDepend = libtar-devel
++                        DependType = Header
++                        MustExist = Yes
++                        DependPath = libtar.h
++                        DependGrepString = tar_open
++        PlatformFeature = libxar
++                Description = X Archive Library
++                MustExist = Preffered
++                FeatureCFLAGS = -DHAVE_LIBXAR
++                FeatureLIBS = -lxar
++                FeatureDepend = libxar-devel
++                        DependType = Header
++                        MustExist = Yes
++                        DependPath = xar/xar.h
++                        DependGrepString = xar_open
++        PlatformFeature = libzip
++                Description = PKZip Library
++                MustExist = Preffered
++                FeatureCFLAGS = -DHAVE_LIBZIP
++                FeatureLIBS = -lzip
++                FeatureDepend = libzip-devel
++                        DependType = Header
++                        MustExist = Yes
++                        DependPath = zip.h
++                        DependGrepString = zip_open
++        PlatformFeature = libgif
++                Description = Uncompressed GIF Library
++                MustExist = Preffered
++                FeatureCFLAGS = -DHAVE_LIBGIF
++                FeatureLIBS = -lgif
++                FeatureDepend = libgif-devel
++                        DependType = Header
++                        MustExist = Yes
++                        DependPath = gif_lib.h
++                        DependGrepString = DGifOpenFileName
++	PlatformFeature = libjpeg
++		Description = JPEG Library
++		MustExist = Preffered
++		FeatureCFLAGS = -DHAVE_LIBJPEG
++		FeatureLIBS = -ljpeg
++		FeatureDepend = libjpeg-devel
++			DependType = Header
++			MustExist = Yes
++			DependPath = jpeglib.h
++			DependGrepString = jpeg_create_decompress
++	PlatformFeature = libpng
++		Description = PNG Library
++		MustExist = Preffered
++		FeatureCFLAGS = -DHAVE_LIBPNG `libpng-config --cflags`
++		FeatureLIBS = `libpng-config --libs`
++		FeatureDepend = libpng-devel
++			DependType = Header
++			MustExist = Yes
++			DependPath = png.h
++			DependGrepString = png_create_read_struct
++	PlatformFeature = libmng
++		Description = MNG Library
++		MustExist = Preffered
++		FeatureCFLAGS = -DHAVE_LIBMNG
++		FeatureLIBS = -lmng -lz
++		FeatureDepend = zlib-devel
++			DependType = Header
++			MustExist = Yes
++			DependPath = zlib.h
++			DependGrepString = deflateInit
++		FeatureDepend = libmng-devel
++			DependType = Header
++			MustExist = Yes
++			DependPath = libmng.h
++			DependGrepString = mng_initialize
++	PlatformFeature = libxpm
++		Description = XPM Library
++		MustExist = Preffered
++		FeatureCFLAGS = -DHAVE_LIBXPM
++		FeatureLIBS = -lXpm
++		FeatureLIB_DIR = -L/usr/X11R6/lib/
++		FeatureDepend = libxpm-devel
++			DependType = Header
++			MustExist = Yes
++			DependPath = X11/xpm.h
++			DependGrepString = XpmReadFileToXpmImage
++	PlatformFeature = Imlib
++		Description = Image library
++		MustExist = Preffered
++		FeatureCFLAGS = `imlib-config --cflags` -DHAVE_IMLIB
++		FeatureLIBS = `imlib-config --libs`
++		FeatureDepend = Imlib-devel
++			DependType = Program
++			MustExist = Yes
++			DependPath = imlib-config
++        PlatformFeature = XF86VidMode
++                Description = XF86 Video Mode extension
++                MustExist = Preferred
++                FeatureCFLAGS = -DHAVE_XF86_VIDMODE
++                FeatureLIBS = -lXxf86vm
++                FeatureLIB_DIR = -L/usr/X11R6/lib/
++                FeatureDepend = xf86vidmode-lib
++                        DependType = Library
++                        MustExist = Yes
++                        DependPath = libXxf86vm.a
++                        DependGrepString = XF86VidModeQueryExtension
++                FeatureDepend = xf86vidmode-devel
++                        DependType = Header
++                        MustExist = Yes
++                        DependPath = X11/extensions/xf86vmode.h
++                        DependGrepString = XF86VidModeQueryExtension
++	PlatformFeature = libgtk
++		Description = GTK+ 1.2.x
++		MustExist = Yes
++		FeatureCFLAGS = `gtk-config --cflags`
++		FeatureLIBS = `gtk-config --libs`
++		FeatureLIB_DIR = -L/usr/X11R6/lib
++		FeatureDepend = gtk-devel
++			DependType = Program
++			MustExist = Yes
++			DependPath = gtk-config
++
++# FreeBSD
++#
++# Author: Sebastian Kutsch <Sebastian.Kutsch@web.de>
++#
++Platform = FreeBSD
++	Description = For FreeBSD
++	PREFIX = /usr
++	CFLAGS = -Wall -O2 -DNEED_STRCASESTR
++	LIBS = -lendeavour2-base -lm
++	LIB_DIR = -L./libendeavour2-base
++	CC = cc
++	CPP = c++
++	PlatformSearchPathInclude = /usr/include
++	PlatformSearchPathInclude = /usr/X11R6/include
++	PlatformSearchPathLib = /lib
++	PlatformSearchPathLib = /usr/lib
++	PlatformSearchPathLib = /usr/X11R6/lib
++	PlatformSearchPathEtc = /etc
++	PlatformSearchPathEtc = /usr/etc
++	PlatformSearchPathBin = /bin
++	PlatformSearchPathBin = /usr/bin
++	PlatformSearchPathBin = /usr/X11R6/bin
++	PlatformSearchPathData = /usr/share/icons
++	PlatformFeature = debug
++		Description = Just adds -g to the CFLAGS for debugging
++		MustExist = No
++		FeatureCFLAGS = -g
++        PlatformFeature = libz
++                Description = GNU Z Compression/Decompression Library
++                MustExist = Preffered
++                FeatureCFLAGS = -DHAVE_LIBZ
++                FeatureLIBS = -lz
++                FeatureDepend = libz-devel
++                        DependType = Header
++                        MustExist = Yes
++                        DependPath = zlib.h
++                        DependGrepString = gzopen
++        PlatformFeature = libbz2
++                Description = BZip2 Block-Sorting Compression/Decompression Library
++                MustExist = Preffered
++                FeatureCFLAGS = -DHAVE_LIBBZ2
++                FeatureLIBS = -lbz2
++                FeatureDepend = libbz2-devel
++                        DependType = Header
++                        MustExist = Yes
++                        DependPath = bzlib.h
++                        DependGrepString = BZ2_bzopen
++        PlatformFeature = libtar
++                Description = Tape Archive Library
++                MustExist = Preffered
++                FeatureCFLAGS = -DHAVE_LIBTAR
++                FeatureLIBS = -ltar
++                FeatureDepend = libtar-devel
++                        DependType = Header
++                        MustExist = Yes
++                        DependPath = libtar.h
++                        DependGrepString = tar_open
++        PlatformFeature = libxar
++                Description = X Archive Library
++                MustExist = Preffered
++                FeatureCFLAGS = -DHAVE_LIBXAR
++                FeatureLIBS = -lxar
++                FeatureDepend = libxar-devel
++                        DependType = Header
++                        MustExist = Yes
++                        DependPath = xar/xar.h
++                        DependGrepString = xar_open
++        PlatformFeature = libzip
++                Description = PKZip Library
++                MustExist = Preffered
++                FeatureCFLAGS = -DHAVE_LIBZIP
++                FeatureLIBS = -lzip
++                FeatureDepend = libzip-devel
++                        DependType = Header
++                        MustExist = Yes
++                        DependPath = zip.h
++                        DependGrepString = zip_open
++	PlatformFeature = libgif
++		Description = Uncompressed GIF Library
++		MustExist = Preffered
++		FeatureCFLAGS = -DHAVE_LIBGIF
++# FreeBSD does not symlink libgif to libungif or vice versa
++		FeatureLIBS = -lungif
++		FeatureDepend = libgif-devel
++			DependType = Header
++			MustExist = Yes
++			DependPath = gif_lib.h
++			DependGrepString = DGifOpenFileName
++	PlatformFeature = libjpeg
++		Description = JPEG Library
++		MustExist = Preffered
++		FeatureCFLAGS = -DHAVE_LIBJPEG
++		FeatureLIBS = -ljpeg
++		FeatureDepend = libjpeg-devel
++			DependType = Header
++			MustExist = Yes
++			DependPath = jpeglib.h
++			DependGrepString = jpeg_create_decompress
++	PlatformFeature = libpng
++		Description = PNG Library
++		MustExist = Preffered
++		FeatureCFLAGS = -DHAVE_LIBPNG `libpng-config --cflags`
++		FeatureLIBS = `libpng-config --libs`
++		FeatureDepend = libpng-devel
++			DependType = Header
++			MustExist = Yes
++			DependPath = png.h
++			DependGrepString = png_create_read_struct
++	PlatformFeature = libmng
++		Description = MNG Library
++		MustExist = Preffered
++		FeatureCFLAGS = -DHAVE_LIBMNG
++		FeatureLIBS = -lmng -lz
++		FeatureDepend = zlib-devel
++			DependType = Header
++			MustExist = Yes
++			DependPath = zlib.h
++			DependGrepString = deflateInit
++		FeatureDepend = libmng-devel
++			DependType = Header
++			MustExist = Yes
++			DependPath = libmng.h
++			DependGrepString = mng_initialize
++	PlatformFeature = libxpm
++		Description = XPM Library
++		MustExist = Preffered
++		FeatureCFLAGS = -DHAVE_LIBXPM
++		FeatureLIBS = -lXpm
++		FeatureLIB_DIR = -L/usr/X11R6/lib/
++		FeatureDepend = libxpm-devel
++			DependType = Header
++			MustExist = Yes
++			DependPath = X11/xpm.h
++			DependGrepString = XpmReadFileToXpmImage
++	PlatformFeature = Imlib
++		Description = Image library
++		MustExist = Preffered
++		FeatureCFLAGS = `imlib-config --cflags` -DHAVE_IMLIB
++		FeatureLIBS = `imlib-config --libs`
++		FeatureDepend = Imlib-devel
++			DependType = Program
++			MustExist = Yes
++			DependPath = imlib-config
++        PlatformFeature = XF86VidMode
++                Description = XF86 Video Mode extension
++                MustExist = Preferred
++                FeatureCFLAGS = -DHAVE_XF86_VIDMODE
++                FeatureLIBS = -lXxf86vm
++                FeatureLIB_DIR = -L/usr/X11R6/lib/
++                FeatureDepend = xf86vidmode-lib
++                        DependType = Library
++                        MustExist = Yes
++                        DependPath = libXxf86vm.a
++                        DependGrepString = XF86VidModeQueryExtension
++                FeatureDepend = xf86vidmode-devel
++                        DependType = Header
++                        MustExist = Yes
++                        DependPath = X11/extensions/xf86vmode.h
++                        DependGrepString = XF86VidModeQueryExtension
++	PlatformFeature = libgtk
++		Description = GTK+ 1.2.x
++		MustExist = Yes
++		FeatureCFLAGS = `gtk-config --cflags`
++		FeatureLIBS = `gtk-config --libs`
++		FeatureLIB_DIR = -L/usr/X11R6/lib
++		FeatureDepend = gtk-devel
++			DependType = Program
++			MustExist = Yes
++			DependPath = gtk-config
++
++# Linux
++#
++# Works on:
++#
++#	Mandrivia Cooker
++#	Red Hat 6.x or newer
++#	SUSE
++#
++# For Debian, see platform "Debian" further below
++#
++Platform = Linux
++	Description = For most any Linux system
++	PREFIX = /usr
++	CFLAGS = -Wall -O2 -DNEED_STRCASESTR
++	LIBS = -lendeavour2-base -lm
++	LIB_DIR = -L./libendeavour2-base
++	CC = cc
++	CPP = c++
++	PlatformSearchPathInclude = /usr/include
++	PlatformSearchPathInclude = /usr/X11R6/include
++	PlatformSearchPathInclude = /usr/local/include
++	PlatformSearchPathInclude = /opt/gnome/include
++	PlatformSearchPathLib = /lib
++	PlatformSearchPathLib = /usr/lib
++	PlatformSearchPathLib = /usr/X11R6/lib
++	PlatformSearchPathLib = /usr/local/lib
++	PlatformSearchPathLib = /opt/gnome/lib
++	PlatformSearchPathEtc = /etc
++	PlatformSearchPathEtc = /usr/etc
++	PlatformSearchPathEtc = /usr/local/etc
++	PlatformSearchPathBin = /bin
++	PlatformSearchPathBin = /usr/bin
++	PlatformSearchPathBin = /usr/X11R6/bin
++	PlatformSearchPathBin = /usr/local/bin
++	PlatformSearchPathBin = /usr/games
++	PlatformSearchPathBin = /opt/gnome/bin
++	PlatformSearchPathData = /usr/share/icons
++	PlatformSearchPathData = /usr/share/games
++	PlatformFeature = debug
++		Description = Just adds -g to the CFLAGS for debugging
++		MustExist = No
++		FeatureCFLAGS = -g
++	PlatformFeature = arch-i486
++		Description = Adds -march=i486 for 486 specific optimizations
++		MustExist = Preferred  
++		FeatureCFLAGS = -march=i486
++		FeatureDepend = i486
++			DependType = Machine
++			MustExist = Yes
++			DependMachine = i486
++	PlatformFeature = arch-i586
++		Description = Adds -march=i586 for Pentium specific optimizations
++		MustExist = Preferred
++		FeatureCFLAGS = -march=i586
++		FeatureDepend = i586
++			DependType = Machine
++			MustExist = Yes
++			DependMachine = i586
++	PlatformFeature = arch-i686
++		Description = Adds -march=i686 for Pentium Pro specific optimizations
++		MustExist = Preferred
++		FeatureCFLAGS = -march=i686
++		FeatureDepend = i686
++			DependType = Machine
++			MustExist = Yes
++			DependMachine = i686
++	PlatformFeature = arch-pentiumpro
++		Description = Adds -march=pentiumpro for Pentium Pro specific optimizations
++		MustExist = Preferred
++		FeatureCFLAGS = -march=pentiumpro
++		FeatureDepend = pentiumpro
++			DependType = Machine
++			MustExist = Yes
++			DependMachine = pentiumpro
++        PlatformFeature = libz
++                Description = GNU Z Compression/Decompression Library
++                MustExist = Preffered
++                FeatureCFLAGS = -DHAVE_LIBZ
++                FeatureLIBS = -lz
++                FeatureDepend = libz-devel
++                        DependType = Header
++                        MustExist = Yes
++                        DependPath = zlib.h
++                        DependGrepString = gzopen
++        PlatformFeature = libbz2
++                Description = BZip2 Block-Sorting Compression/Decompression Library
++                MustExist = Preffered
++                FeatureCFLAGS = -DHAVE_LIBBZ2
++                FeatureLIBS = -lbz2
++                FeatureDepend = libbz2-devel
++                        DependType = Header
++                        MustExist = Yes
++                        DependPath = bzlib.h
++                        DependGrepString = BZ2_bzopen
++        PlatformFeature = libtar
++                Description = Tape Archive Library
++                MustExist = Preffered
++                FeatureCFLAGS = -DHAVE_LIBTAR
++                FeatureLIBS = -ltar
++                FeatureDepend = libtar-devel
++                        DependType = Header
++                        MustExist = Yes
++                        DependPath = libtar.h
++                        DependGrepString = tar_open
++        PlatformFeature = libxar
++                Description = X Archive Library
++                MustExist = Preffered
++                FeatureCFLAGS = -DHAVE_LIBXAR
++                FeatureLIBS = -lxar
++                FeatureDepend = libxar-devel
++                        DependType = Header
++                        MustExist = Yes
++                        DependPath = xar/xar.h
++                        DependGrepString = xar_open
++        PlatformFeature = libzip
++                Description = PKZip Library
++                MustExist = Preffered
++                FeatureCFLAGS = -DHAVE_LIBZIP
++                FeatureLIBS = -lzip
++                FeatureDepend = libzip-devel
++                        DependType = Header
++                        MustExist = Yes
++                        DependPath = zip.h
++                        DependGrepString = zip_open
++        PlatformFeature = libgif
++                Description = Uncompressed GIF Library
++                MustExist = Preffered
++                FeatureCFLAGS = -DHAVE_LIBGIF
++                FeatureLIBS = -lgif
++                FeatureDepend = libgif-devel
++                        DependType = Header
++                        MustExist = Yes
++                        DependPath = gif_lib.h
++                        DependGrepString = DGifOpenFileName
++	PlatformFeature = libjpeg
++		Description = JPEG Library
++		MustExist = Preffered
++		FeatureCFLAGS = -DHAVE_LIBJPEG
++		FeatureLIBS = -ljpeg
++		FeatureDepend = libjpeg-devel
++			DependType = Header
++			MustExist = Yes
++			DependPath = jpeglib.h
++			DependGrepString = jpeg_create_decompress
++	PlatformFeature = libpng
++		Description = PNG Library
++		MustExist = Preffered
++		FeatureCFLAGS = -DHAVE_LIBPNG `libpng-config --cflags`
++		FeatureLIBS = `libpng-config --libs`
++		FeatureDepend = libpng-devel
++			DependType = Header
++			MustExist = Yes
++			DependPath = png.h
++			DependGrepString = png_create_read_struct
++	PlatformFeature = libmng
++		Description = MNG Library
++		MustExist = Preffered
++		FeatureCFLAGS = -DHAVE_LIBMNG
++		FeatureLIBS = -lmng -lz
++		FeatureDepend = zlib-devel
++			DependType = Header
++			MustExist = Yes
++			DependPath = zlib.h
++			DependGrepString = deflateInit
++		FeatureDepend = libmng-devel
++			DependType = Header
++			MustExist = Yes
++			DependPath = libmng.h
++			DependGrepString = mng_initialize
++	PlatformFeature = libxpm
++		Description = XPM Library
++		MustExist = Preffered
++		FeatureCFLAGS = -DHAVE_LIBXPM
++		FeatureLIBS = -lXpm
++		FeatureLIB_DIR = -L/usr/X11R6/lib/
++		FeatureDepend = libxpm-devel
++			DependType = Header
++			MustExist = Yes
++			DependPath = X11/xpm.h
++			DependGrepString = XpmReadFileToXpmImage
++	PlatformFeature = Imlib
++		Description = Image library
++		MustExist = Preffered
++		FeatureCFLAGS = `imlib-config --cflags` -DHAVE_IMLIB
++		FeatureLIBS = `imlib-config --libs`
++		FeatureDepend = Imlib-devel
++			DependType = Program
++			MustExist = Yes
++			DependPath = imlib-config
++        PlatformFeature = XF86VidMode
++                Description = XF86 Video Mode extension
++                MustExist = Preferred                  
++                FeatureCFLAGS = -DHAVE_XF86_VIDMODE
++                FeatureLIBS = -lXxf86vm
++                FeatureLIB_DIR = -L/usr/X11R6/lib/
++                FeatureDepend = xf86vidmode-lib
++                        DependType = Library
++                        MustExist = Yes
++                        DependPath = libXxf86vm.a
++                        DependGrepString = XF86VidModeQueryExtension
++                FeatureDepend = xf86vidmode-devel
++                        DependType = Header
++                        MustExist = Yes
++                        DependPath = X11/extensions/xf86vmode.h
++                        DependGrepString = XF86VidModeQueryExtension
++	PlatformFeature = libgtk
++		Description = GTK+ 1.2.x
++		MustExist = Yes
++		FeatureCFLAGS = `gtk-config --cflags`
++		FeatureLIBS = `gtk-config --libs`
++		FeatureLIB_DIR = -L/usr/X11R6/lib
++		FeatureDepend = gtk-devel
++			DependType = Program
++			MustExist = Yes
++			DependPath = gtk-config
++
++
++# Debian GNU/Linux
++#
++# Author: Christoph Berg <cb@df7cb.de>
++#
++Platform = Debian
++	Description = For compiling on Debian GNU/Linux
++	PREFIX = /usr
++	CFLAGS = -g -Wall -DDEBIAN -DNEED_STRCASESTR -fPIC
++	LIBS = -lendeavour2-base -lm
++	LIB_DIR = -L./libendeavour2-base
++	CC = cc
++	CPP = c++
++	PlatformSearchPathInclude = /usr/include
++	PlatformSearchPathInclude = /usr/X11R6/include
++	PlatformSearchPathLib = /lib
++	PlatformSearchPathLib = /usr/lib
++	PlatformSearchPathLib = /usr/X11R6/lib
++	PlatformSearchPathEtc = /etc
++	PlatformSearchPathEtc = /usr/etc
++	PlatformSearchPathBin = /bin
++	PlatformSearchPathBin = /usr/bin
++	PlatformSearchPathBin = /usr/X11R6/bin
++	PlatformSearchPathBin = /usr/games
++	PlatformSearchPathData = /usr/share/icons
++	PlatformSearchPathData = /usr/share/games
++	PlatformFeature = debian-normal
++		Description = Add -O2 to CFLAGS
++		MustExist = No
++		FeatureCFLAGS = -O2
++	PlatformFeature = debian-noopt
++		Description = Add -O0 to CFLAGS
++		MustExist = No
++		FeatureCFLAGS = -O0
++        PlatformFeature = libz
++                Description = GNU Z Compression/Decompression Library
++                MustExist = Preffered
++                FeatureCFLAGS = -DHAVE_LIBZ
++                FeatureLIBS = -lz
++                FeatureDepend = libz-devel
++                        DependType = Header
++                        MustExist = Yes
++                        DependPath = zlib.h
++                        DependGrepString = gzopen
++        PlatformFeature = libbz2
++                Description = BZip2 Block-Sorting Compression/Decompression Library
++                MustExist = Preffered
++                FeatureCFLAGS = -DHAVE_LIBBZ2
++                FeatureLIBS = -lbz2
++                FeatureDepend = libbz2-devel
++                        DependType = Header
++                        MustExist = Yes
++                        DependPath = bzlib.h
++                        DependGrepString = BZ2_bzopen
++        PlatformFeature = libtar
++                Description = Tape Archive Library
++                MustExist = Preffered
++                FeatureCFLAGS = -DHAVE_LIBTAR
++                FeatureLIBS = -ltar
++                FeatureDepend = libtar-devel
++                        DependType = Header
++                        MustExist = Yes
++                        DependPath = libtar.h
++                        DependGrepString = tar_open
++        PlatformFeature = libxar
++                Description = X Archive Library
++                MustExist = Preffered
++                FeatureCFLAGS = -DHAVE_LIBXAR
++                FeatureLIBS = -lxar
++                FeatureDepend = libxar-devel
++                        DependType = Header
++                        MustExist = Yes
++                        DependPath = xar/xar.h
++                        DependGrepString = xar_open
++        PlatformFeature = libzip
++                Description = PKZip Library
++                MustExist = Preffered
++                FeatureCFLAGS = -DHAVE_LIBZIP
++                FeatureLIBS = -lzip
++                FeatureDepend = libzip-devel
++                        DependType = Header
++                        MustExist = Yes
++                        DependPath = zip.h
++                        DependGrepString = zip_open
++        PlatformFeature = libgif
++                Description = Uncompressed GIF Library
++                MustExist = Preffered
++                FeatureCFLAGS = -DHAVE_LIBGIF
++                FeatureLIBS = -lgif
++                FeatureDepend = libgif-devel
++                        DependType = Header
++                        MustExist = Yes
++                        DependPath = gif_lib.h
++                        DependGrepString = DGifOpenFileName
++	PlatformFeature = libjpeg
++		Description = JPEG Library
++		MustExist = Preffered
++		FeatureCFLAGS = -DHAVE_LIBJPEG
++		FeatureLIBS = -ljpeg
++		FeatureDepend = libjpeg-devel
++			DependType = Header
++			MustExist = Yes
++			DependPath = jpeglib.h
++			DependGrepString = jpeg_create_decompress
++	PlatformFeature = libpng
++		Description = PNG Library
++		MustExist = Preffered
++		FeatureCFLAGS = -DHAVE_LIBPNG `libpng-config --cflags`
++		FeatureLIBS = `libpng-config --libs`
++		FeatureDepend = libpng-devel
++			DependType = Header
++			MustExist = Yes
++			DependPath = png.h
++			DependGrepString = png_create_read_struct
++	PlatformFeature = libmng
++		Description = MNG Library
++		MustExist = Preffered
++		FeatureCFLAGS = -DHAVE_LIBMNG
++		FeatureLIBS = -lmng -lz
++		FeatureDepend = zlib-devel
++			DependType = Header
++			MustExist = Yes
++			DependPath = zlib.h
++			DependGrepString = deflateInit
++		FeatureDepend = libmng-devel
++			DependType = Header
++			MustExist = Yes
++			DependPath = libmng.h
++			DependGrepString = mng_initialize
++	PlatformFeature = libxpm
++		Description = XPM Library
++		MustExist = Preffered
++		FeatureCFLAGS = -DHAVE_LIBXPM
++		FeatureLIBS = -lXpm
++		FeatureLIB_DIR = -L/usr/X11R6/lib/
++		FeatureDepend = libxpm-devel
++			DependType = Header
++			MustExist = Yes
++			DependPath = X11/xpm.h
++			DependGrepString = XpmReadFileToXpmImage
++	PlatformFeature = Imlib
++		Description = Image library
++		MustExist = Preffered
++		FeatureCFLAGS = `imlib-config --cflags` -DHAVE_IMLIB
++		FeatureLIBS = `imlib-config --libs`
++		FeatureDepend = Imlib-devel
++			DependType = Program
++			MustExist = Yes
++			DependPath = imlib-config
++	PlatformFeature = XF86VidMode
++		Description = XF86 Video Mode extension
++		MustExist = Preferred
++		FeatureCFLAGS = -DHAVE_XF86_VIDMODE
++		FeatureLIBS = -lXxf86vm
++		FeatureLIB_DIR = -L/usr/X11R6/lib/
++		FeatureDepend = xf86vidmode-lib
++			DependType = Library
++			MustExist = Yes
++			DependPath = libXxf86vm.a
++			DependGrepString = XF86VidModeQueryExtension
++		FeatureDepend = xf86vidmode-devel
++			DependType = Header
++			MustExist = Yes
++			DependPath = X11/extensions/xf86vmode.h
++			DependGrepString = XF86VidModeQueryExtension
++	PlatformFeature = libgtk
++		Description = GTK+ 1.2.x
++		MustExist = Yes
++		FeatureCFLAGS = `gtk-config --cflags`
++		FeatureLIBS = `gtk-config --libs`
++		FeatureLIB_DIR = -L/usr/X11R6/lib
++		FeatureDepend = gtk-devel
++			DependType = Program
++			MustExist = Yes
++			DependPath = gtk-config
++
++# Linux - Big Endian
++#
++# For Linux on big endian machines.
++#
++Platform = LinuxBigEndian
++	Description = For Linux on big endian machines
++	PREFIX = /usr
++	CFLAGS = -Wall -O2 -DNEED_STRCASESTR -DUSE_BIG_ENDIAN
++	LIBS = -lendeavour2-base -lm
++	LIB_DIR = -L./libendeavour2-base
++	CC = cc
++	CPP = c++
++	PlatformSearchPathInclude = /usr/include
++	PlatformSearchPathInclude = /usr/X11R6/include
++	PlatformSearchPathInclude = /usr/local/include
++	PlatformSearchPathInclude = /opt/gnome/include
++	PlatformSearchPathLib = /lib
++	PlatformSearchPathLib = /usr/lib
++	PlatformSearchPathLib = /usr/X11R6/lib
++	PlatformSearchPathLib = /usr/local/lib
++	PlatformSearchPathLib = /opt/gnome/lib
++	PlatformSearchPathEtc = /etc
++	PlatformSearchPathEtc = /usr/etc
++	PlatformSearchPathEtc = /usr/local/etc
++	PlatformSearchPathBin = /bin
++	PlatformSearchPathBin = /usr/bin
++	PlatformSearchPathBin = /usr/X11R6/bin
++	PlatformSearchPathBin = /usr/local/bin
++	PlatformSearchPathBin = /usr/games
++	PlatformSearchPathBin = /opt/gnome/bin
++	PlatformSearchPathData = /usr/share/icons
++	PlatformSearchPathData = /usr/share/games
++	PlatformFeature = debug
++		Description = Just adds -g to the CFLAGS for debugging
++		MustExist = No
++		FeatureCFLAGS = -g
++	PlatformFeature = arch-i486
++		Description = Adds -march=i486 for 486 specific optimizations
++		MustExist = Preferred  
++		FeatureCFLAGS = -march=i486
++		FeatureDepend = i486
++			DependType = Machine
++			MustExist = Yes
++			DependMachine = i486
++	PlatformFeature = arch-i586
++		Description = Adds -march=i586 for Pentium specific optimizations
++		MustExist = Preferred
++		FeatureCFLAGS = -march=i586
++		FeatureDepend = i586
++			DependType = Machine
++			MustExist = Yes
++			DependMachine = i586
++	PlatformFeature = arch-i686
++		Description = Adds -march=i686 for Pentium Pro specific optimizations
++		MustExist = Preferred
++		FeatureCFLAGS = -march=i686
++		FeatureDepend = i686
++			DependType = Machine
++			MustExist = Yes
++			DependMachine = i686
++	PlatformFeature = arch-pentiumpro
++		Description = Adds -march=pentiumpro for Pentium Pro specific optimizations
++		MustExist = Preferred
++		FeatureCFLAGS = -march=pentiumpro
++		FeatureDepend = pentiumpro
++			DependType = Machine
++			MustExist = Yes
++			DependMachine = pentiumpro
++        PlatformFeature = libz
++                Description = GNU Z Compression/Decompression Library
++                MustExist = Preffered
++                FeatureCFLAGS = -DHAVE_LIBZ
++                FeatureLIBS = -lz
++                FeatureDepend = libz-devel
++                        DependType = Header
++                        MustExist = Yes
++                        DependPath = zlib.h
++                        DependGrepString = gzopen
++        PlatformFeature = libbz2
++                Description = BZip2 Block-Sorting Compression/Decompression Library
++                MustExist = Preffered
++                FeatureCFLAGS = -DHAVE_LIBBZ2
++                FeatureLIBS = -lbz2
++                FeatureDepend = libbz2-devel
++                        DependType = Header
++                        MustExist = Yes
++                        DependPath = bzlib.h
++                        DependGrepString = BZ2_bzopen
++        PlatformFeature = libtar
++                Description = Tape Archive Library
++                MustExist = Preffered
++                FeatureCFLAGS = -DHAVE_LIBTAR
++                FeatureLIBS = -ltar
++                FeatureDepend = libtar-devel
++                        DependType = Header
++                        MustExist = Yes
++                        DependPath = libtar.h
++                        DependGrepString = tar_open
++        PlatformFeature = libxar
++                Description = X Archive Library
++                MustExist = Preffered
++                FeatureCFLAGS = -DHAVE_LIBXAR
++                FeatureLIBS = -lxar
++                FeatureDepend = libxar-devel
++                        DependType = Header
++                        MustExist = Yes
++                        DependPath = xar/xar.h
++                        DependGrepString = xar_open
++        PlatformFeature = libzip
++                Description = PKZip Library
++                MustExist = Preffered
++                FeatureCFLAGS = -DHAVE_LIBZIP
++                FeatureLIBS = -lzip
++                FeatureDepend = libzip-devel
++                        DependType = Header
++                        MustExist = Yes
++                        DependPath = zip.h
++                        DependGrepString = zip_open
++        PlatformFeature = libgif
++                Description = Uncompressed GIF Library
++                MustExist = Preffered
++                FeatureCFLAGS = -DHAVE_LIBGIF
++                FeatureLIBS = -lgif
++                FeatureDepend = libgif-devel
++                        DependType = Header
++                        MustExist = Yes
++                        DependPath = gif_lib.h
++                        DependGrepString = DGifOpenFileName
++	PlatformFeature = libjpeg
++		Description = JPEG Library
++		MustExist = Preffered
++		FeatureCFLAGS = -DHAVE_LIBJPEG
++		FeatureLIBS = -ljpeg
++		FeatureDepend = libjpeg-devel
++			DependType = Header
++			MustExist = Yes
++			DependPath = jpeglib.h
++			DependGrepString = jpeg_create_decompress
++	PlatformFeature = libpng
++		Description = PNG Library
++		MustExist = Preffered
++		FeatureCFLAGS = -DHAVE_LIBPNG `libpng-config --cflags`
++		FeatureLIBS = `libpng-config --libs`
++		FeatureDepend = libpng-devel
++			DependType = Header
++			MustExist = Yes
++			DependPath = png.h
++			DependGrepString = png_create_read_struct
++	PlatformFeature = libmng
++		Description = MNG Library
++		MustExist = Preffered
++		FeatureCFLAGS = -DHAVE_LIBMNG
++		FeatureLIBS = -lmng -lz
++		FeatureDepend = zlib-devel
++			DependType = Header
++			MustExist = Yes
++			DependPath = zlib.h
++			DependGrepString = deflateInit
++		FeatureDepend = libmng-devel
++			DependType = Header
++			MustExist = Yes
++			DependPath = libmng.h
++			DependGrepString = mng_initialize
++	PlatformFeature = libxpm
++		Description = XPM Library
++		MustExist = Preffered
++		FeatureCFLAGS = -DHAVE_LIBXPM
++		FeatureLIBS = -lXpm
++		FeatureLIB_DIR = -L/usr/X11R6/lib/
++		FeatureDepend = libxpm-devel
++			DependType = Header
++			MustExist = Yes
++			DependPath = X11/xpm.h
++			DependGrepString = XpmReadFileToXpmImage
++	PlatformFeature = Imlib
++		Description = Image library
++		MustExist = Preffered
++		FeatureCFLAGS = `imlib-config --cflags` -DHAVE_IMLIB
++		FeatureLIBS = `imlib-config --libs`
++		FeatureDepend = Imlib-devel
++			DependType = Program
++			MustExist = Yes
++			DependPath = imlib-config
++        PlatformFeature = XF86VidMode
++                Description = XF86 Video Mode extension
++                MustExist = Preferred                  
++                FeatureCFLAGS = -DHAVE_XF86_VIDMODE
++                FeatureLIBS = -lXxf86vm
++                FeatureLIB_DIR = -L/usr/X11R6/lib/
++                FeatureDepend = xf86vidmode-lib
++                        DependType = Library
++                        MustExist = Yes
++                        DependPath = libXxf86vm.a
++                        DependGrepString = XF86VidModeQueryExtension
++                FeatureDepend = xf86vidmode-devel
++                        DependType = Header
++                        MustExist = Yes
++                        DependPath = X11/extensions/xf86vmode.h
++                        DependGrepString = XF86VidModeQueryExtension
++	PlatformFeature = libgtk
++		Description = GTK+ 1.2.x
++		MustExist = Yes
++		FeatureCFLAGS = `gtk-config --cflags`
++		FeatureLIBS = `gtk-config --libs`
++		FeatureLIB_DIR = -L/usr/X11R6/lib
++		FeatureDepend = gtk-devel
++			DependType = Program
++			MustExist = Yes
++			DependPath = gtk-config
++
++# Sun/Solaris 2.8
++#
++Platform = Solaris
++	Description = For Sun/Solaris 2.8
++	PREFIX = /usr
++	CFLAGS = -Wall -O2 -DNEED_STRCASESTR -D__SOLARIS__
++	LIBS = -lendeavour2-base -lm -lposix4
++	LIB_DIR = -L./libendeavour2-base
++	CC = cc
++	CPP = c++
++	PlatformSearchPathInclude = /usr/include
++	PlatformSearchPathInclude = /usr/X11R6/include
++	PlatformSearchPathLib = /lib
++	PlatformSearchPathLib = /usr/lib
++	PlatformSearchPathLib = /usr/X11R6/lib
++	PlatformSearchPathEtc = /etc
++	PlatformSearchPathEtc = /usr/etc
++	PlatformSearchPathBin = /bin
++	PlatformSearchPathBin = /usr/bin
++	PlatformSearchPathBin = /usr/X11R6/bin
++	PlatformSearchPathData = /usr/share/icons
++	PlatformFeature = debug
++		Description = Just adds -g to the CFLAGS for debugging
++		MustExist = No
++		FeatureCFLAGS = -g
++        PlatformFeature = libz
++                Description = GNU Z Compression/Decompression Library
++                MustExist = Preffered
++                FeatureCFLAGS = -DHAVE_LIBZ
++                FeatureLIBS = -lz
++                FeatureDepend = libz-devel
++                        DependType = Header
++                        MustExist = Yes
++                        DependPath = zlib.h
++                        DependGrepString = gzopen
++        PlatformFeature = libbz2
++                Description = BZip2 Block-Sorting Compression/Decompression Library
++                MustExist = Preffered
++                FeatureCFLAGS = -DHAVE_LIBBZ2
++                FeatureLIBS = -lbz2
++                FeatureDepend = libbz2-devel
++                        DependType = Header
++                        MustExist = Yes
++                        DependPath = bzlib.h
++                        DependGrepString = BZ2_bzopen
++        PlatformFeature = libtar
++                Description = Tape Archive Library
++                MustExist = Preffered
++                FeatureCFLAGS = -DHAVE_LIBTAR
++                FeatureLIBS = -ltar
++                FeatureDepend = libtar-devel
++                        DependType = Header
++                        MustExist = Yes
++                        DependPath = libtar.h
++                        DependGrepString = tar_open
++        PlatformFeature = libxar
++                Description = X Archive Library
++                MustExist = Preffered
++                FeatureCFLAGS = -DHAVE_LIBXAR
++                FeatureLIBS = -lxar
++                FeatureDepend = libxar-devel
++                        DependType = Header
++                        MustExist = Yes
++                        DependPath = xar/xar.h
++                        DependGrepString = xar_open
++        PlatformFeature = libzip
++                Description = PKZip Library
++                MustExist = Preffered
++                FeatureCFLAGS = -DHAVE_LIBZIP
++                FeatureLIBS = -lzip
++                FeatureDepend = libzip-devel
++                        DependType = Header
++                        MustExist = Yes
++                        DependPath = zip.h
++                        DependGrepString = zip_open
++        PlatformFeature = libgif
++                Description = Uncompressed GIF Library
++                MustExist = Preffered
++                FeatureCFLAGS = -DHAVE_LIBGIF
++                FeatureLIBS = -lgif
++                FeatureDepend = libgif-devel
++                        DependType = Header
++                        MustExist = Yes
++                        DependPath = gif_lib.h
++                        DependGrepString = DGifOpenFileName
++	PlatformFeature = libjpeg
++		Description = JPEG Library
++		MustExist = Preffered
++		FeatureCFLAGS = -DHAVE_LIBJPEG
++		FeatureLIBS = -ljpeg
++		FeatureDepend = libjpeg-devel
++			DependType = Header
++			MustExist = Yes
++			DependPath = jpeglib.h
++			DependGrepString = jpeg_create_decompress
++	PlatformFeature = libpng
++		Description = PNG Library
++		MustExist = Preffered
++		FeatureCFLAGS = -DHAVE_LIBPNG `libpng-config --cflags`
++		FeatureLIBS = `libpng-config --libs`
++		FeatureDepend = libpng-devel
++			DependType = Header
++			MustExist = Yes
++			DependPath = png.h
++			DependGrepString = png_create_read_struct
++	PlatformFeature = libmng
++		Description = MNG Library
++		MustExist = Preffered
++		FeatureCFLAGS = -DHAVE_LIBMNG
++		FeatureLIBS = -lmng -lz
++		FeatureDepend = zlib-devel
++			DependType = Header
++			MustExist = Yes
++			DependPath = zlib.h
++			DependGrepString = deflateInit
++		FeatureDepend = libmng-devel
++			DependType = Header
++			MustExist = Yes
++			DependPath = libmng.h
++			DependGrepString = mng_initialize
++	PlatformFeature = libxpm
++		Description = XPM Library
++		MustExist = Preffered
++		FeatureCFLAGS = -DHAVE_LIBXPM
++		FeatureLIBS = -lXpm
++		FeatureLIB_DIR = -L/usr/X11R6/lib/
++		FeatureDepend = libxpm-devel
++			DependType = Header
++			MustExist = Yes
++			DependPath = X11/xpm.h
++			DependGrepString = XpmReadFileToXpmImage
++	PlatformFeature = Imlib
++		Description = Image library
++		MustExist = Preffered
++		FeatureCFLAGS = `imlib-config --cflags` -DHAVE_IMLIB
++		FeatureLIBS = `imlib-config --libs`
++		FeatureDepend = Imlib-devel
++			DependType = Program
++			MustExist = Yes
++			DependPath = imlib-config
++        PlatformFeature = XF86VidMode
++                Description = XF86 Video Mode extension
++                MustExist = Preferred                  
++                FeatureCFLAGS = -DHAVE_XF86_VIDMODE
++                FeatureLIBS = -lXxf86vm
++                FeatureLIB_DIR = -L/usr/X11R6/lib/
++                FeatureDepend = xf86vidmode-lib
++                        DependType = Library
++                        MustExist = Yes
++                        DependPath = libXxf86vm.a
++                        DependGrepString = XF86VidModeQueryExtension
++                FeatureDepend = xf86vidmode-devel
++                        DependType = Header
++                        MustExist = Yes
++                        DependPath = X11/extensions/xf86vmode.h
++                        DependGrepString = XF86VidModeQueryExtension
++	PlatformFeature = libgtk
++		Description = GTK+ 1.2.x
++		MustExist = Yes
++		FeatureCFLAGS = `gtk-config --cflags`
++		FeatureLIBS = `gtk-config --libs`
++		FeatureLIB_DIR = -L/usr/X11R6/lib
++		FeatureDepend = gtk-devel
++			DependType = Program
++			MustExist = Yes
++			DependPath = gtk-config
