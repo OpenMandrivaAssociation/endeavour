@@ -13,7 +13,7 @@ Release:    %{release}
 Summary:    Graphical file manager
 Group:      Graphical desktop/Other
 License:    GPL
-URL:        http://wolfpack.twu.net/Endeavour2
+URL:        https://wolfpack.twu.net/Endeavour2
 Source:     http://wolfpack.twu.net/users/wolfpack/%{name}-%{version}.tar.bz2
 Patch0:     endeavour-3.1.2-fix-build-error.patch
 Patch1:     endeavour-3.1.2-fix-lib64-build.patch
